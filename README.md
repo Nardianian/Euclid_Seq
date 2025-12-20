@@ -53,10 +53,14 @@ The controls on each row are, in order from left to right: a rhythm activation c
 In the right corner of the window is the "Clock Settings" button/popup menu for choosing the clock, with different options for plugins (DAW, INTERNAL, EXTERNAL) and standalone (Internal, External).
 
 Latest src (not uploaded on this repo) not compiles with these errors: 
+
 Error C2672 'juce::detail::toAddress': No matching overloaded functions found euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h 93
+
 Error C2228 The element to the left of '.->' must have a class, structure, or union euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h 93
+
 Error C2439 'juce::Span<const std::byte,18446744073709551615>::ptr': Unable to initialize member euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h 93 
-                                                                                                                                    Files\JUCE\modules\juce_core\containers\juce_Span.h 119		
+                                                                                                                                    Files\JUCE\modules\juce_core\containers\juce_Span.h 119	
+                                                                                                                                    
 Error C2440 'initialization': unable to convert from 'void' to 'Value *'
         with
         [
