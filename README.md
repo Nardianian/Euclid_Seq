@@ -59,6 +59,7 @@ Error C2228 The element to the left of '.->' must have a class, structure, or un
 
 Error C2439 'juce::Span<const std::byte,18446744073709551615>::ptr': Unable to initialize member euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h 93 
                                                                                                                                     Files\JUCE\modules\juce_core\containers\juce_Span.h 119	
+                                                                                                                                    
 Error C2440 'initialization': unable to convert from 'void' to 'Value *'
         with
         [
