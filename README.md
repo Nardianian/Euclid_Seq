@@ -1,4 +1,4 @@
-Work in Progress, at this moment not finished, doesn't work, doesn't compile (read the latest build errors below).
+Work in Progress, at this moment not finished.
 
 Project on Windows 11 Home using Juce 8.0.12 (starting with 8.0.10 and continued with 8.0.11) and Visual Studio 2026 Insiders (starting with Visual Studio Community Edition 2022 v17), for plugins and standalone for Windows x64. 
 The project planning is still ongoing and subject to constant changes; it is currently planned to involves programming a MIDI generator for six independent euclidean rhythms with the following features:
@@ -50,19 +50,7 @@ Active | Note | Steps | Pulses | Swing | Micro | Velocity | Note Len | Arp On | 
 Below the row of labels are the six rows with the controls for each rhythm, the arpeggiator, and the MIDI output.
 The controls on each row are, in order from left to right: a rhythm activation checkbox labeled R1 to R6 (Rhythm 1, Rhythm 2, etc.), then the seven rotary knobs for Note, Steps, Pulses, Swing, Microtiming, Velocity Accent, and Note Length, with boxes below each rotary encoder displaying the numerical value corresponding to the position of the encoder above it. Then there's the checkbox to enable ARP, then the tickable popup menu with snapshot/mask for selecting the seven notes/octaves to arpeggiate, then the combo box/menu for choosing the Mode, and the one for choosing the Rate.
 In the lower right corner of the window is the "Clock Settings" button/popup menu for choosing the clock.
-
-Thus latest src not compiles with these errors: 
-
-Error C2672 'juce::detail::toAddress': no matching overloaded functions were found  euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h  93		
-Error C2228 the element to the left of '.->' must have a class, structure, or union euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h  93		
-Error C2439 'juce::Span<const std::byte,18446744073709551615>::ptr': Unable to initialize member  euclidean_seq_SharedCode C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h 119		
-Error C2440 'initialization': cannot convert from 'void' to 'Value *'
-        with
-        [
-            Value=const std::byte
-        ]	euclidean_seq_SharedCode   C:\Program Files\JUCE\modules\juce_core\containers\juce_Span.h 119		
-
-        
+    
 thanks to Andreas Sandersen 
 https://sanandreas.no/software
 https://github.com/sandy999999/rhythm-generator
