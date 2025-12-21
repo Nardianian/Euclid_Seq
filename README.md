@@ -3,9 +3,9 @@ Work in Progress, at this moment not finished, doesn't work, doesn't compile (re
 Project on Windows 11 Home using Juce 8.0.12 (starting with 8.0.10 and continued with 8.0.11) and Visual Studio 2026 Insiders (starting with Visual Studio Community Edition 2022 v17), for plugins and standalone for Windows x64. 
 The project planning is still ongoing and subject to constant changes; it is currently planned to involves programming a MIDI generator for six independent euclidean rhythms with the following features:
 
-A) Generation of 6 independent rhythms, in the form of 6 separate MIDI streams but linked to a global clock.
+A) Generation of 6 independent rhythms, in the form of six separate MIDI streams but linked to a global clock.
 
-B) A single clock that drives all 6 rhythms simultaneously; the clock is selectable with separate options for plugins (DAW, Internal, External) and for standalone (Internal, External). 
+B) A single clock that drives all six rhythms simultaneously; the clock is selectable with separate options for plugins (DAW, Internal, External) and for standalone (Internal, External). 
 
 C) The MIDI stream for each rhythm is generated based on various independent commands or rotary knobs, which in order on the GUI are:
 
@@ -37,7 +37,7 @@ D) ARP, the MIDI stream thus generated enters the arpeggiator:
    
    D2.3: Use "Rate" to select the arpeggio speed of the selected notes.
    
-   To summarize the arpeggiator's action: the ARP reads all the notes it receives from the rhythm's MIDI stream, but from all of these, it chooses up to a maximum of 7 selectable notes simultaneously and arpeggiates only these. In short, for each line, the rhythm proceeds unchanged EXCEPT for the selected notes, which will be arpeggiated. This arpeggio is therefore added to or superimposed on the rest of the rhythm with the unselected notes and together they are sent to the MIDI output.
+   To summarize the arpeggiator's action: the ARP reads all the notes it receives from the rhythm's MIDI stream, but from all of these, it chooses up to a maximum of seven selectable notes simultaneously and arpeggiates only these. In short, for each line, the rhythm proceeds unchanged EXCEPT for the selected notes, which will be arpeggiated. This arpeggio is therefore added to or superimposed on the rest of the rhythm with the unselected notes and together they are sent to the MIDI output.
          
 E) Finally, the rhythm thus created, including any possible arpeggio (if activate on some Rhythm channel), is output from a MIDI-Out whose port and channel can be selected: the goal of having independent outputs for 
    each of the six rhythms is to have an app similar to a multi-timbral virtual instrument, except that in this case it would be a MIDI utility designed to trigger a rhythm section, specifically the various elements of 
@@ -48,7 +48,7 @@ E) Finally, the rhythm thus created, including any possible arpeggio (if activat
 Active | Note | Steps | Pulses | Swing | Micro | Velocity | Note Len | Arp On | ARP Notes | Mode | ARP Rate | MIDI Port | MIDI Ch |
 
 Below the row of labels are the six rows with the controls for each rhythm, the arpeggiator, and the MIDI output.
-The controls on each row are, in order from left to right: a rhythm activation checkbox labeled R1 to R6 (Rhythm 1, Rhythm 2, etc.), then the seven rotary knobs for Note, Steps, Pulses, Swing, Microtiming, Velocity Accent, and Note Length, with boxes below each rotary encoder displaying the numerical value corresponding to the position of the encoder above it. Then there's the checkbox to enable ARP, then the tickable popup menu with snapshot/mask for selecting the 7 notes/octaves to arpeggiate, then the combo box/menu for choosing the Mode, and the one for choosing the Rate.
+The controls on each row are, in order from left to right: a rhythm activation checkbox labeled R1 to R6 (Rhythm 1, Rhythm 2, etc.), then the seven rotary knobs for Note, Steps, Pulses, Swing, Microtiming, Velocity Accent, and Note Length, with boxes below each rotary encoder displaying the numerical value corresponding to the position of the encoder above it. Then there's the checkbox to enable ARP, then the tickable popup menu with snapshot/mask for selecting the seven notes/octaves to arpeggiate, then the combo box/menu for choosing the Mode, and the one for choosing the Rate.
 In the lower right corner of the window is the "Clock Settings" button/popup menu for choosing the clock.
 
 Thus latest src not compiles with these errors: 
