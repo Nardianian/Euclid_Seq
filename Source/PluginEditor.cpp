@@ -1,10 +1,4 @@
 /*
-  ==============================================================================
-
-    This file contains the basic framework code for a JUCE plugin editor.
-
-  ==============================================================================
-*/
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -67,12 +61,12 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
     clockBpmSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 20);
 
     // Header labels
-    const char* labelsText[16] =
+    const char* labelsText[14] =
     {
         "Active", "Note", "Steps", "Pulses", "Swing", "Micro", "Velocity", "NoteLen",
-        "ARP On", "Mode", "ARP Rate", "ARP Notes", "MIDI Port", "Port", "MIDI Ch", "Ch"
+        "ARP On", "Mode", "ARP Rate", "ARP Notes", "MIDI Port", "MIDI Ch"
     };
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < 14; ++i)
     {
         addAndMakeVisible(headerLabels[i]);
         headerLabels[i].setText(labelsText[i], juce::dontSendNotification);
@@ -87,10 +81,20 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         auto setupRotary = [](juce::Slider& s)
             {
                 s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-                s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 38, 15);
+                s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 42, 16);
+                // Garantisce visibilità su Windows 11 / LookAndFeel V4
+                s.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::orange);
+                s.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colours::black);
+                s.setColour(juce::Slider::thumbColourId, juce::Colours::white);
+                s.setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
+                s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
             };
 
         addAndMakeVisible(row.activeButton);
+
+        row.rowLabel.setText("R" + juce::String(i + 1), juce::dontSendNotification);
+        row.rowLabel.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(row.rowLabel);
 
         setupRotary(row.noteKnob);
         setupRotary(row.stepsKnob);
@@ -115,13 +119,85 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         row.arpMode.addItem("UP_DOWN", 3);
         row.arpMode.addItem("RANDOM", 4);
         addAndMakeVisible(row.arpMode);
-        addAndMakeVisible(row.arpRateKnob);
-        addAndMakeVisible(row.arpNotesKnob);
+        row.arpRateBox.addItemList(
+            { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16D" }, 1);
+        addAndMakeVisible(row.arpRateBox);
+
+        addAndMakeVisible(row.arpNotesButton);
+        row.arpNotesButton.setButtonText("Notes");
+        row.arpNotesButton.onClick = [this, i]()
+            {
+                juce::PopupMenu menu;
+
+                // Note realmente ricevute dal ritmo
+                auto inputNotes = audioProcessor.midiGen.getArpInputNotes(i);
+                auto& slots = audioProcessor.midiGen.arpNoteSlots[i];
+
+                if (inputNotes.empty())
+                {
+                    menu.addItem(1, "No notes received yet", false);
+                }
+                else
+                {
+                    for (int midiNote : inputNotes)
+                    {
+                        bool selected = false;
+
+                        for (int s = 0; s < 7; ++s)
+                        {
+                            if (slots[s].load() == midiNote)
+                            {
+                                selected = true;
+                                break;
+                            }
+                        }
+
+                        menu.addItem(
+                            1 + midiNote,
+                            juce::MidiMessage::getMidiNoteName(midiNote, true, true, 3),
+                            true,
+                            selected);
+                    }
+                }
+
+                menu.showMenuAsync(
+                    juce::PopupMenu::Options(),
+                    [this, i](int result)
+                    {
+                        if (result <= 0)
+                            return;
+
+                        int midiNote = result - 1;
+                        auto& slots = audioProcessor.midiGen.arpNoteSlots[i];
+
+                        // Toggle select / deselect
+                        for (int s = 0; s < 7; ++s)
+                        {
+                            if (slots[s].load() == midiNote)
+                            {
+                                slots[s].store(-1);
+                                return;
+                            }
+                        }
+
+                        // Add if free slot exists
+                        for (int s = 0; s < 7; ++s)
+                        {
+                            if (slots[s].load() < 0)
+                            {
+                                slots[s].store(midiNote);
+                                return;
+                            }
+                        }
+                    });
+            };
 
         // MIDI
         addAndMakeVisible(row.midiPortLabel);
+        row.midiPortLabel.setText("Port", juce::dontSendNotification);
         addAndMakeVisible(row.midiPortBox);
         addAndMakeVisible(row.midiChannelLabel);
+        row.midiChannelLabel.setText("Ch", juce::dontSendNotification);
         addAndMakeVisible(row.midiChannelBox);
 
         clockSettingsButton.setTooltip("Open Clock Settings");
@@ -137,8 +213,8 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
             rhythmRows[r].noteLenKnob.setTooltip("Note length");
             rhythmRows[r].arpActive.setTooltip("Enable arpeggiator");
             rhythmRows[r].arpMode.setTooltip("ARP Mode (UP, DOWN, RANDOM, etc.)");
-            rhythmRows[r].arpRateKnob.setTooltip("ARP Rate multiplier");
-            rhythmRows[r].arpNotesKnob.setTooltip("Number of ARP notes");
+            rhythmRows[r].arpRateBox.setTooltip("ARP musical rate (1/4, 1/8T, 1/16D, etc.)");
+            rhythmRows[r].arpNotesButton.setTooltip("Number of ARP notes");
             rhythmRows[r].midiPortBox.setTooltip("Select MIDI Output Port");
             rhythmRows[r].midiChannelBox.setTooltip("Select MIDI Channel");
         }
@@ -184,15 +260,9 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         att.arpMode = std::make_unique<ComboBoxAttachment>(
             params, "rhythm" + juce::String(i) + "_arpMode", row.arpMode);
 
-        att.arpRate = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_arpRate", row.arpRateKnob);
-
-        att.arpNotes = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_arpNotes", row.arpNotesKnob);
+        att.arpRate = std::make_unique<ComboBoxAttachment>(
+            params, "rhythm" + juce::String(i) + "_arpRate", row.arpRateBox);
     }
-
-    clockSourceAttachment = std::make_unique<ComboBoxAttachment>(
-        audioProcessor.parameters, "clockSource", clockBpmBox);
 
     clockBPMAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "clockBPM", clockBpmSlider);
@@ -224,67 +294,89 @@ void Euclidean_seqAudioProcessorEditor::openClockSettingsPopup()
 void Euclidean_seqAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced(10);
+
     const int headerHeight = 40;
     const int rowHeight = 90;
-
-    // HEADER
-    int hx = 0;
-    for (int i = 0; i < 16; ++i)
-    {
-        headerLabels[i].setBounds(hx, 0, 60, headerHeight);
-        hx += 65;
-    }
-
-    // COSTANTI
-    const int knobSize = 38;
+    const int knobSize = 48;
     const int valueHeight = 15;
 
-    clockSettingsButton.setBounds(getWidth() - 160, 10, 150, 30);
-    clockBpmSlider.setBounds(getWidth() - 320, 10, 150, 30);
+    // ================= COLUMN DEFINITIONS =================
+    const int startX = 40;   // margine sinistro
+    const int colSpacing = 85;
 
-    // OFFSET ORIZZONTALI (pixel)
-    const int dx[] =
+    enum Column
     {
-        0,      // active
-        19,     // note
-        38,     // steps
-        57,     // pulses
-        76,     // swing
-        95,     // micro
-        114,    // velocity
-        133,    // notelen
-        152,    // arp on
-        171,    // arp mode
-        140,    // arp rate
-        166,    // arp notes
-        209,    // midi port
-        247     // midi channel
+        COL_ACTIVE = 0,
+        COL_NOTE,
+        COL_STEPS,
+        COL_PULSES,
+        COL_SWING,
+        COL_MICRO,
+        COL_VELOCITY,
+        COL_NOTELEN,
+        COL_ARP_ON,
+        COL_ARP_NOTES,
+        COL_ARP_MODE,
+        COL_ARP_RATE,
+        COL_MIDI_PORT,
+        COL_MIDI_CH,
+        NUM_COLUMNS
     };
 
+    int columnX[NUM_COLUMNS];
+    for (int c = 0; c < NUM_COLUMNS; ++c)
+        columnX[c] = startX + c * colSpacing;
+
+    // ================= HEADER =================
+    for (int i = 0; i < NUM_COLUMNS; ++i)
+    {
+        headerLabels[i].setBounds(
+            columnX[i] - 20,
+            0,
+            colSpacing,
+            headerHeight);
+    }
+
+    // ================= CLOCK CONTROLS =================
+    clockSettingsButton.setBounds(getWidth() - 180, getHeight() - 50, 170, 30);
+    clockBpmSlider.setBounds(getWidth() - 360, getHeight() - 50, 170, 30);
+
+    // ================= RHYTHM ROWS =================
     for (int r = 0; r < 6; ++r)
     {
-        int y = headerHeight + r * rowHeight;
-        int baseX = 10;
         auto& row = rhythmRows[r];
+        int y = headerHeight + r * rowHeight;
 
-        row.activeButton.setBounds(baseX, y, 30, 30);
+        // Row label R1–R6
+        row.rowLabel.setBounds(columnX[COL_ACTIVE] - 30, y + 6, 25, 20);
 
-        row.noteKnob.setBounds(baseX + dx[1], y, knobSize, knobSize);
-        row.stepsKnob.setBounds(baseX + dx[2], y, knobSize, knobSize);
-        row.pulsesKnob.setBounds(baseX + dx[3], y, knobSize, knobSize);
-        row.swingKnob.setBounds(baseX + dx[4], y, knobSize, knobSize);
-        row.microKnob.setBounds(baseX + dx[5], y, knobSize, knobSize);
-        row.velocityKnob.setBounds(baseX + dx[6], y, knobSize, knobSize);
-        row.noteLenKnob.setBounds(baseX + dx[7], y, knobSize, knobSize);
+        // Active
+        row.activeButton.setBounds(columnX[COL_ACTIVE] - 2, y, 26, 26);
 
-        row.arpActive.setBounds(baseX + dx[8], y, 30, 30);
-        row.arpMode.setBounds(baseX + dx[9], y, 60, 25);
+        // Rotary knobs + value boxes
+        row.noteKnob.setBounds(columnX[COL_NOTE], y, knobSize, knobSize);
+        row.stepsKnob.setBounds(columnX[COL_STEPS], y, knobSize, knobSize);
+        row.pulsesKnob.setBounds(columnX[COL_PULSES], y, knobSize, knobSize);
+        row.swingKnob.setBounds(columnX[COL_SWING], y, knobSize, knobSize);
+        row.microKnob.setBounds(columnX[COL_MICRO], y, knobSize, knobSize);
+        row.velocityKnob.setBounds(columnX[COL_VELOCITY], y, knobSize, knobSize);
+        row.noteLenKnob.setBounds(columnX[COL_NOTELEN], y, knobSize, knobSize);
 
-        row.arpRateKnob.setBounds(baseX + dx[10], y, knobSize, knobSize);
-        row.arpNotesKnob.setBounds(baseX + dx[11], y, knobSize, knobSize);
+        // Arp On
+        row.arpActive.setBounds(columnX[COL_ARP_ON] - 2, y, 26, 26);
 
-        row.midiPortBox.setBounds(baseX + dx[12], y, 80, 25);
-        row.midiChannelBox.setBounds(baseX + dx[13], y, 60, 25);
+        // Arp Notes
+        row.arpNotesButton.setBounds(columnX[COL_ARP_NOTES], y, 80, 25);
+
+        // Arp Mode
+        row.arpMode.setBounds(columnX[COL_ARP_MODE], y, 80, 25);
+
+        // Arp Rate
+        row.arpRateBox.setBounds(columnX[COL_ARP_RATE], y, 80, 25);
+
+        // MIDI
+        row.midiPortBox.setBounds(columnX[COL_MIDI_PORT], y, 80, 25);
+        row.midiChannelBox.setBounds(columnX[COL_MIDI_CH], y, 60, 25);
     }
 }
 
