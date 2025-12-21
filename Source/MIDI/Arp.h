@@ -1,12 +1,4 @@
 /*
-  ==============================================================================
-
-    Arp.h
-    Created: 9 Oct 2022 9:12:18pm
-    Author:  Andreas Sandersen
-    Modified: 13 Dec. 2025 00.25:00 am by Nard.
-  ==============================================================================
-*/
 #pragma once
 #include <JuceHeader.h>
 
@@ -82,6 +74,52 @@ public:
         return note;
     }
 
+    // ===== SAMPLE-ACCURATE ARP ADVANCE =====
+    bool advanceSamples(double samplesToProcess, double samplesPerArpStep)
+    {
+        arpSampleCounter += samplesToProcess;
+
+        if (arpSampleCounter < samplesPerArpStep)
+            return false;
+
+        arpSampleCounter -= samplesPerArpStep;
+
+        if (numNotes <= 0)
+            return false;
+
+        switch (arpType)
+        {
+        case ArpType::UP:
+            currentStep = (currentStep + 1) % numNotes;
+            break;
+
+        case ArpType::DOWN:
+            currentStep = (currentStep - 1 + numNotes) % numNotes;
+            break;
+
+        case ArpType::UP_DOWN:
+            if (directionUp)
+            {
+                currentStep++;
+                if (currentStep >= numNotes - 1)
+                    directionUp = false;
+            }
+            else
+            {
+                currentStep--;
+                if (currentStep <= 0)
+                    directionUp = true;
+            }
+            break;
+
+        case ArpType::RANDOM:
+            currentStep = juce::Random::getSystemRandom().nextInt(numNotes);
+            break;
+        }
+
+        return true;
+    }
+
     bool advance(double samplesPerStep, double samplesPerArpStep)
     {
         arpSampleCounter += samplesPerStep;
@@ -128,7 +166,7 @@ public:
     }
 
     // ===== READ CURRENT ARP STEP (OUTPUT) =====
-    int getCurrentStep() const
+    int getNoteIndex() const
     {
         return currentStep;
     }
@@ -161,4 +199,6 @@ private:
     JUCE_LEAK_DETECTOR(Arp)
 };
 #pragma once
+
+
 
