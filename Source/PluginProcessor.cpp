@@ -1,5 +1,4 @@
-/*
- #include "PluginProcessor.h"
+#include "PluginProcessor.h"
 #include "PluginEditor.h"
 
 //==============================================================================
@@ -8,6 +7,15 @@ Euclidean_seqAudioProcessor::Euclidean_seqAudioProcessor()
         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
     parameters(*this, nullptr, "Params", createParameterLayout())
 {
+    // ===== ENUMERATE MIDI OUTPUT PORTS =====
+    refreshMidiOutputs();
+
+    // ===== INIT RHYTHM MIDI STATE =====
+    for (auto& r : rhythmMidiOuts)
+    {
+        r.selectedPortIndex = -1;
+        r.selectedChannel = 1;
+    }
 
     // Initialize default rhythm patterns and arp notes
     for (int i = 0; i < 6; ++i)
@@ -30,6 +38,15 @@ Euclidean_seqAudioProcessor::createParameterLayout()
 
     for (int i = 0; i < 6; ++i)
     {
+        layout.add(std::make_unique<AudioParameterBool>(
+            "rhythm" + String(i) + "_mute", "Mute", false));
+
+        layout.add(std::make_unique<AudioParameterBool>(
+            "rhythm" + String(i) + "_solo", "Solo", false));
+
+        layout.add(std::make_unique<AudioParameterBool>(
+            "rhythm" + String(i) + "_reset", "Reset", false));
+
         layout.add(std::make_unique<AudioParameterBool>(
             "rhythm" + String(i) + "_active", "Active", true));
 
@@ -79,13 +96,17 @@ Euclidean_seqAudioProcessor::createParameterLayout()
             "ARP Notes Mask",
             0,
             127,
-            0b0001111)); // default: first 4 active notes
+            0b0001111)); // default: prime 4 note attive
 
-        // MIDI Port
-        layout.add(std::make_unique<juce::AudioParameterChoice>(
-            "rhythm" + juce::String(i) + "_midiPort",
-            "MIDI Port",
-            juce::StringArray({ "Port1", "Port2", "Port3", "Port4" }), 0));
+        // ===== MIDI PORT (dinamico, allineato alla ComboBox) =====
+        juce::StringArray midiPortNames;
+        auto midiDevices = juce::MidiOutput::getAvailableDevices();
+
+        for (const auto& dev : midiDevices)
+            midiPortNames.add(dev.name);
+
+        if (midiPortNames.isEmpty())
+            midiPortNames.add("No MIDI Outputs");
 
         // MIDI Channel
         layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -102,22 +123,101 @@ Euclidean_seqAudioProcessor::createParameterLayout()
         "clockBPM", "Clock BPM",
         NormalisableRange<float>(40.0f, 300.0f), 120.0f));
 
+    layout.add(std::make_unique<AudioParameterFloat>(
+        "bassGlideTime",
+        "Bass Glide Time",
+        NormalisableRange<float>(0.01f, 0.5f),
+        0.08f));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        "bassGlideCurve",
+        "Bass Glide Curve",
+        NormalisableRange<float>(0.2f, 2.0f),
+        0.6f));
+
+    layout.add(std::make_unique<AudioParameterChoice>(
+        "bassPitchBendRange",
+        "Bass Pitch Bend Range",
+        juce::StringArray({ "±2 semitones", "±12 semitones" }),
+        1));
+
+    layout.add(std::make_unique<AudioParameterBool>(
+        "bassMode",
+        "Bass Mono Mode",
+        true));
+
+    layout.add(std::make_unique<AudioParameterBool>(
+        "globalPlay",
+        "Global Play",
+        false));
+
     return layout;
 }
+//==============================================================================
+void Euclidean_seqAudioProcessor::refreshMidiOutputs()
+{
+    // 1) Legge lista attuale dispositivi MIDI
+    auto currentDevices = juce::MidiOutput::getAvailableDevices();
+
+    // 2) Confronta con lista precedente per rilevare cambi
+    bool changed = (currentDevices != availableMidiOutputs);
+
+    if (!changed)
+        return; // nessuna modifica
+
+    // 3) Aggiorna lista globale
+    availableMidiOutputs = currentDevices;
+
+    // 4) Chiudi porte non più valide
+    for (auto& r : rhythmMidiOuts)
+    {
+        if (r.selectedPortIndex >= availableMidiOutputs.size())
+        {
+            r.output.reset();
+            r.selectedPortIndex = -1; // reset sicuro
+        }
+    }
+    // NOTA: aggiornamento ComboBox avverrà in Editor tramite timer o callback
+}
+
+void Euclidean_seqAudioProcessor::updateMidiOutputForRhythm(int rhythmIndex, int deviceIndex)
+{
+    if (rhythmIndex < 0 || rhythmIndex >= 6)
+        return;
+
+    auto& r = rhythmMidiOuts[rhythmIndex];
+
+    if (deviceIndex < 0 || deviceIndex >= availableMidiOutputs.size())
+    {
+        r.output.reset();
+        r.selectedPortIndex = -1;
+        return;
+    }
+
+    if (r.selectedPortIndex == deviceIndex && r.output)
+        return;
+
+    r.output.reset();
+    r.output = juce::MidiOutput::openDevice(
+        availableMidiOutputs[deviceIndex].identifier);
+
+    r.selectedPortIndex = deviceIndex;
+}
+
 //==============================================================================
 void Euclidean_seqAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
-    globalSampleCounter = 0;  // reset global sample counter
+    globalSampleCounter = 0;  // reset contatore globale dei sample
     for (int r = 0; r < 6; ++r)
     {
         nextStepSamplePerRhythm[r] = 0;  // reset clock per rhythm
         stepCounterPerRhythm[r] = 0;     // reset step counter
-        stepMicrotiming[r].clear();      // microtiming initialized empty
+        stepMicrotiming[r].clear();      // microtiming inizializzato vuoto
     }
 
-    midiClockCounter = 0;                // reset external clock counter
-    externalClockRunning = false;        // reset external clock state
+    midiClockCounter = 0;                // reset contatore clock esterno
+    externalClockRunning = false;        // reset stato clock esterno
 }
 
 void Euclidean_seqAudioProcessor::releaseResources()
@@ -127,6 +227,32 @@ void Euclidean_seqAudioProcessor::releaseResources()
 //==============================================================================
 void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
+    // ================== SYNCHRONIZE NOTE SOURCE FROM PARAMETERS ==================
+    for (int r = 0; r < 6; ++r)
+    {
+        if (auto* noteParam = parameters.getParameter("rhythm" + juce::String(r) + "_note"))
+        {
+            float val = noteParam->getValue(); // 0..1
+            int intVal = (int)(val * 10000.0f); // convertire in range più utile
+            // Decidere tipo
+            if (intVal < 1000)
+            {
+                noteSources[r].type = NoteSourceType::Single;
+                noteSources[r].value = intVal + 36; // 36->84 come in GUI
+            }
+            else if (intVal < 2000)
+            {
+                noteSources[r].type = NoteSourceType::Scale;
+                noteSources[r].value = intVal; // ID della scala
+            }
+            else
+            {
+                noteSources[r].type = NoteSourceType::Chord;
+                noteSources[r].value = intVal; // ID dell'accordo
+            }
+        }
+    }
+
     // ================= EXTERNAL MIDI CLOCK INPUT =================
     for (const auto metadata : midiMessages)
     {
@@ -145,6 +271,8 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         else if (msg.isMidiStop())
         {
+            bassNoteActive = false;
+            lastBassNote = -1;
             externalClockRunning = false;
         }
         else if (msg.isMidiContinue())
@@ -162,6 +290,7 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     buffer.clear();
+
     // ===== UPDATE ARP ENABLE FLAGS (once per block) =====
     for (int r = 0; r < 6; ++r)
     {
@@ -180,7 +309,16 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     double bpm = 120.0;
     bool dawPlaying = false;
 
-    // ================= DAW CLOCK =================
+#if JUCE_STANDALONE
+    // ================= STANDALONE =====================
+    // ================= INTERNAL CLOCK =================
+    if (clockSource == ClockSource::Internal)
+    {
+        bpm = parameters.getRawParameterValue("clockBPM")->load();
+        dawPlaying = true;
+    }
+#else
+    // ===== PLUGIN =====
     if (clockSource == ClockSource::DAW)
     {
         if (auto* playHead = getPlayHead())
@@ -193,14 +331,32 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             }
         }
     }
-    // ================= INTERNAL CLOCK =================
+    else if (clockSource == ClockSource::Internal)
+    {
+        bpm = parameters.getRawParameterValue("clockBPM")->load();
+        dawPlaying = true;
+    }
+#endif
     else
     {
         bpm = parameters.getRawParameterValue("clockBPM")->load();
         dawPlaying = true;
     }
 
+    bool globalPlay =
+        parameters.getRawParameterValue("globalPlay")->load() > 0.5f;
+
+    globalPlayState.store(globalPlay);
+
+    // clock fermo → stop
     if (clockSource != ClockSource::External && !dawPlaying)
+    {
+        midiMessages.clear();
+        return;
+    }
+
+    // PLAY globale fermo → stop
+    if (!globalPlayState.load())
     {
         midiMessages.clear();
         return;
@@ -211,6 +367,18 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // 1 step = 1/16 note (standard Euclidean grid)
     samplesPerStep = samplesPerBeat / 4.0;
+
+    // ===== BASS (R6) GLIDE TIME =====
+    bassGlideTimeSeconds =
+        parameters.getRawParameterValue("bassGlideTime")->load();
+
+    bassGlideCurve =
+        parameters.getRawParameterValue("bassGlideCurve")->load();
+
+    bassPitchBendRange =
+        (parameters.getRawParameterValue("bassPitchBendRange")->load() < 0.5f)
+        ? 2
+        : 12;
 
     // ================== READ PARAMETERS (DAW-SAFE) ==================
     for (int i = 0; i < 6; ++i)
@@ -280,18 +448,109 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             midiGen.arpNotes[i].clear();
         }
     }
-// ================= SAMPLE-ACCURATE PROCESSING =================
+    // ================= RESET PER-RHYTHM (one-shot, pre-sample) =================
+    for (int r = 0; r < 6; ++r)
+    {
+        auto* resetParam = parameters.getRawParameterValue(
+            "rhythm" + juce::String(r) + "_reset");
+
+        if (resetParam != nullptr && resetParam->load() > 0.5f)
+        {
+            // Reset pattern + arp
+            midiGen.rhythmPatterns[r].reset();
+            midiGen.rhythmArps[r].reset();
+
+            // Reset timing
+            stepCounterPerRhythm[r] = 0;
+            nextStepSamplePerRhythm[r] = globalSampleCounter;
+            stepMicrotiming[r].clear();
+
+            // Reset bass state if R6
+            if (r == 5)
+            {
+                bassNoteActive = false;
+                bassGlideActive = false;
+                lastBassNote = -1;
+            }
+
+            // Reset one-shot parameter
+            if (auto* p = parameters.getParameter(
+                "rhythm" + juce::String(r) + "_reset"))
+            {
+                p->setValueNotifyingHost(0.0f);
+            }
+        }
+    }
+
+    // ================= SAMPLE-ACCURATE PROCESSING =================
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        bool anySoloActive = false;
         for (int r = 0; r < 6; ++r)
         {
-            // ===== ACTIVE (Rhythm Enable / Disable) =====
-            if (auto* activeParam = parameters.getRawParameterValue(
-                "rhythm" + juce::String(r) + "_active"))
+            if (parameters.getRawParameterValue("rhythm" + juce::String(r) + "_solo")->load() > 0.5f)
             {
-                if (activeParam->load() < 0.5f)
-                    continue; // rhythm disattivo: non generare nulla
+                anySoloActive = true;
+                break;
             }
+        }
+
+        for (int r = 0; r < 6; ++r)
+        {
+            // ===== ACTIVE / MUTE / SOLO check =====
+            const bool isActive =
+                *parameters.getRawParameterValue("rhythm" + juce::String(r) + "_active") > 0.5f;
+
+            if (!isActive)
+                continue;
+
+            const bool isMuted =
+                *parameters.getRawParameterValue("rhythm" + juce::String(r) + "_mute") > 0.5f;
+
+            const bool isSolo =
+                *parameters.getRawParameterValue("rhythm" + juce::String(r) + "_solo") > 0.5f;
+
+            // SOLO logic
+            if (anySoloActive && !isSolo)
+                continue;
+
+            // ===== SAMPLES PER ARP STEP =====
+            double samplesPerArpStep = samplesPerStep; // default = 1 step
+            if (parameters.getRawParameterValue("rhythm" + juce::String(r) + "_arpActive")->load() > 0.5f)
+            {
+                auto* arpRateParam = parameters.getRawParameterValue("rhythm" + juce::String(r) + "_arpRate");
+                static const double arpRateTable[] =
+                { 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.1666667, 0.375 };
+                int rateIndex = juce::jlimit(0, 7, (int)arpRateParam->load());
+                double arpRate = arpRateTable[rateIndex];
+                samplesPerArpStep = samplesPerStep * arpRate;
+            }
+
+            // Se mutato → non emettere MIDI (ma il clock avanza)
+            if (isMuted)
+            {
+                midiGen.advanceArp(r, samplesPerStep, samplesPerArpStep);
+                continue;
+            }
+
+            // 4.4: RESET edge-trigger
+            const bool doReset = *parameters.getRawParameterValue("rhythm" + juce::String(r) + "_reset") > 0.5f;
+            if (doReset)
+            {
+                midiGen.rhythmPatterns[r].reset();
+                midiGen.rhythmArps[r].reset();
+
+                if (auto* resetParam = parameters.getParameter("rhythm" + juce::String(r) + "_reset"))
+                    resetParam->setValueNotifyingHost(0.0f);
+            }
+
+            // ===== READ MIDI OUTPUT PORT (per rhythm) =====
+            int midiPort = (int)parameters.getRawParameterValue(
+                "rhythm" + juce::String(r) + "_midiPort")->load();
+
+            // ===== UPDATE REAL MIDI OUTPUT =====
+            // AudioParameterChoice usa index-based values
+            updateMidiOutputForRhythm(r, midiPort);
 
             bool stepTriggered = false;
 
@@ -314,12 +573,29 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 midiGen.rhythmArps[r].advanceSamples(1.0, samplesPerArpStep);
             }
 
-            // ===== EXTERNAL MIDI CLOCK =====
-            if (clockSource == ClockSource::External)
+            // ===== EXTERNAL MIDI CLOCK (sample-accurate, jitter-free) =====
+            if (clockSource == ClockSource::External && externalClockRunning)
             {
-                if (externalClockRunning && midiClockCounter >= 6)
+                // 24 MIDI clock ticks = 1 beat
+                constexpr double ticksPerBeat = 24.0;
+
+                // samples per MIDI clock tick
+                const double samplesPerTick = samplesPerBeat / ticksPerBeat;
+
+                // accumulatore per rhythm (persistente)
+                static double extClockSampleAccum[6] = { 0.0 };
+
+                // aggiungiamo i sample corrispondenti ai tick ricevuti
+                if (midiClockCounter > 0)
                 {
-                    midiClockCounter -= 6;
+                    extClockSampleAccum[r] += midiClockCounter * samplesPerTick;
+                    midiClockCounter = 0;
+                }
+
+                // trigger step SOLO quando il tempo musicale è passato
+                if (extClockSampleAccum[r] >= samplesPerStep)
+                {
+                    extClockSampleAccum[r] -= samplesPerStep;
                     stepTriggered = true;
                 }
             }
@@ -347,47 +623,92 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             int baseNote = (int)parameters.getRawParameterValue(
                 "rhythm" + juce::String(r) + "_note")->load();
 
-            if (midiGen.triggerStep(r, baseNote, outMidiNote))
+            // ================== GENERA NOTE MIDI PER QUESTO STEP ==================
+            std::vector<int> generatedNotes;
+
+            // Usa la funzione del generatore Euclidean per ottenere le note da noteSources
+            switch (noteSources[r].type)
             {
+            case NoteSourceType::Single:
+                generatedNotes.push_back(noteSources[r].value);
+                break;
+
+            case NoteSourceType::Scale:
+                generatedNotes = midiGen.getScaleNotes(noteSources[r].value); // funzione da implementare in midiGen
+                break;
+
+            case NoteSourceType::Chord:
+                generatedNotes = midiGen.getChordNotes(noteSources[r].value); // funzione da implementare in midiGen
+                break;
+            }
+
+            // ===== UPDATE ARP NOTE SLOTS (max 7 note) =====
+            if (parameters.getRawParameterValue(
+                "rhythm" + juce::String(r) + "_arpActive")->load() > 0.5f)
+            {
+                if (generatedNotes.size() > 7)
+                    generatedNotes.resize(7);
+
+                midiGen.setArpNotes(r, generatedNotes);
+            }
+
+            // Per ora prendiamo la prima nota come baseNote
+            if (!generatedNotes.empty())
+                baseNote = generatedNotes[0];
+
+            bool shouldTrigger = false;
+
+            // ===== EUCLIDEAN / ARP TRIGGER DECISION =====
+            if (parameters.getRawParameterValue(
+                "rhythm" + juce::String(r) + "_arpActive")->load() > 0.5f)
+            {
+                // ARP attivo → trigger solo se l'ARP è avanzato
+                if (midiGen.rhythmArps[r].advanceSamples(0.0, 0.0)) // stato già avanzato sopra
+                {
+                    shouldTrigger = midiGen.triggerStep(r, baseNote, outMidiNote);
+                }
+            }
+            else
+            {
+                // ARP disattivo → trigger euclideo normale
+                shouldTrigger = midiGen.triggerStep(r, baseNote, outMidiNote);
+            }
+
+            if (shouldTrigger)
+            {
+                // ===== READ MIDI OUTPUT PORT INDEX =====
                 int midiPortIndex = 0;
                 if (auto* portParam = parameters.getRawParameterValue(
                     "rhythm" + juce::String(r) + "_midiPort"))
                 {
-                    midiPortIndex = (int)portParam->load(); // 0..N
+                    midiPortIndex = (int)portParam->load();
                 }
-             // ===== MIDI PORT TAG (SysEx) =====
-             // JUCE 8 richiede puntatore + dimensione (NO initializer_list)
-             const juce::uint8 sysExData[2] =
-             {
-             0x7D, // Manufacturer ID (non commerciale)
-             static_cast<juce::uint8>(midiPortIndex)
-            };
-             
-             juce::MidiMessage portTag =
-             juce::MidiMessage::createSysExMessage(
-             sysExData,
-             2);
-             
-             stagedMidiEvents.push_back({
-              midiPortIndex,
-              portTag,
-              sample
-              });
 
+                // ===== BUILD PORT TAG (SysEx) =====
+                const juce::uint8 sysExData[2] =
+                {
+                    0x7D, // non-commercial SysEx ID
+                    static_cast<juce::uint8>(midiPortIndex)
+                };
+
+                juce::MidiMessage portTag =
+                    juce::MidiMessage::createSysExMessage(sysExData, 2);
+
+                // ===== PUSH PORT TAG (FIRST EVENT) =====
+                stagedMidiEvents.push_back({
+                    r,              // rhythmIndex
+                    midiPortIndex,  // deviceIndex
+                    portTag,
+                    sample
+                    });
+
+                // ===== VELOCITY =====
                 int velocity = 100;
                 if (auto* velParam = parameters.getRawParameterValue(
                     "rhythm" + juce::String(r) + "_velocityAccent"))
                 {
                     velocity = juce::jlimit(1, 127, (int)velParam->load());
                 }
-                juce::MidiMessage noteOn =
-                    juce::MidiMessage::noteOn(midiChannel, outMidiNote, (juce::uint8)velocity);
-
-                stagedMidiEvents.push_back({
-                    midiPortIndex,
-                    noteOn,
-                    sample
-                    });
 
                 // ===== NOTE LENGTH (sample-accurate) =====
                 double noteLength = 0.5;
@@ -399,23 +720,72 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
                 int noteOffSample = sample + int(samplesPerStep * noteLength);
 
-                // ===== BUFFER-CROSSING NOTE-OFF (solo basso r == 5) =====
-                if (r == 5 && noteOffSample >= numSamples)
+                // ===== BASS R6 — TRUE MONO LEGATO + MIDI GLIDE =====
+                if (r == 5)
                 {
-                    pendingNoteOffs.push_back({
+                    if (bassNoteActive)
+                    {
+                        // LEGATO: no NoteOff
+                        bassStartNote = lastBassNote;
+                        bassTargetNote = outMidiNote;
+
+                        bassGlideActive = true;
+                        bassGlideProgress = 0.0;
+                    }
+                    else
+                    {
+                        bassNoteActive = true;
+                    }
+
+                    // ONE NoteOn only
+                    stagedMidiEvents.push_back({
+                        r,
+                        midiPortIndex,
+                        juce::MidiMessage::noteOn(
+                            midiChannel,
+                            outMidiNote,
+                            (juce::uint8)velocity),
+                        sample
+                        });
+
+                    lastBassNote = outMidiNote;
+
+                    // Conditional NoteOff
+                    int noteOffSampleAdjusted = sample + int(samplesPerStep * noteLength);
+                    if (noteOffSampleAdjusted >= numSamples)
+                    {
+                        pendingNoteOffs.push_back(
+                            { midiChannel, outMidiNote,
+                              noteOffSampleAdjusted - numSamples });
+                    }
+                    else
+                    {
+                        stagedMidiEvents.push_back({
+                            r,
+                            midiPortIndex,
+                            juce::MidiMessage::noteOff(midiChannel, outMidiNote),
+                            noteOffSampleAdjusted
+                            });
+                    }
+
+                    continue; // 🔴 IMPORTANT
+                }
+
+                // ===== NORMAL RHYTHMS =====
+                stagedMidiEvents.push_back({
+                    r,
+                    midiPortIndex,
+                    juce::MidiMessage::noteOn(
                         midiChannel,
                         outMidiNote,
-                        noteOffSample - numSamples
-                        });
-                    noteOffSample = numSamples - 1;
-                }
-                // ===== NOTE OFF =====
-                juce::MidiMessage noteOff =
-                    juce::MidiMessage::noteOff(midiChannel, outMidiNote);
+                        (juce::uint8)velocity),
+                    sample
+                    });
 
                 stagedMidiEvents.push_back({
+                    r,
                     midiPortIndex,
-                    noteOff,
+                    juce::MidiMessage::noteOff(midiChannel, outMidiNote),
                     noteOffSample
                     });
             }
@@ -464,15 +834,55 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
 
         globalSampleCounter++;
+
+        // ===== BASS R6 — MIDI GLIDE (Pitch Bend) =====
+        if (bassGlideActive)
+        {
+            double glideSamplesTotal = bassGlideTimeSeconds * currentSampleRate;
+            bassGlideProgress += 1.0;
+
+            double t = bassGlideProgress / glideSamplesTotal;
+            if (t >= 1.0)
+            {
+                t = 1.0;
+                bassGlideActive = false;
+            }
+
+            // ===== ANALOG-STYLE CURVE =====
+            // curve < 1.0  -> log
+            // curve = 1.0  -> linear
+            // curve > 1.0  -> exp
+            t = std::pow(t, bassGlideCurve);
+
+            // Pitch Bend range: ±2 semitoni (standard)
+            double semitoneDelta = (bassTargetNote - bassStartNote) * t;
+            double normalized = semitoneDelta / (double)bassPitchBendRange;
+
+            int pitchValue = juce::jlimit(
+                0, 16383,
+                8192 + int(normalized * 8192.0)
+            );
+
+            juce::MidiMessage bend =
+                juce::MidiMessage::pitchWheel(1, pitchValue);
+
+            midiMessages.addEvent(bend, sample);
+        }
     }
-    // ===== FLUSH MIDI EVENTS (multi-port logical routing) [or move this] ===== //
+    // ===== FLUSH MIDI EVENTS (REAL MULTI-PORT MIDI OUT) =====
     for (const auto& e : stagedMidiEvents)
     {
-        // Currently: All ports end up in the same MidiBuffer
-        // The portIndex can be used by host / script / future routing
+        // 1) DAW MIDI
         midiMessages.addEvent(e.message, e.sampleOffset);
-    }
 
+        // 2) MIDI REALE (per rhythm)
+        if (e.rhythmIndex >= 0 && e.rhythmIndex < 6)
+        {
+            auto& r = rhythmMidiOuts[e.rhythmIndex];
+            if (r.output)
+                r.output->sendMessageNow(e.message);
+        }
+    }
     stagedMidiEvents.clear();
 }
 //==============================================================================
@@ -500,6 +910,8 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new Euclidean_seqAudioProcessor();
 }
+
+
 
 
 
