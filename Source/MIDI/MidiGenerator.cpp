@@ -1,6 +1,6 @@
 #include "MidiGenerator.h"
-// Al momento gran parte del codice é inline
-// ===== IMPLEMENTAZIONE =====
+// At the moment most of the code is inline
+// ===== IMPLEMENTATION =====
 std::vector<int> MidiGenerator::getScaleNotes(int scaleID) const
 {
     switch (scaleID)
@@ -27,10 +27,10 @@ std::vector<int> MidiGenerator::getChordNotes(int chordID) const
     }
 }
 
-// ===== HELPER: aggiorna le note ARP basate su scala o accordo =====
+// ===== HELPER: Update ARP notes based on scale or chord =====
 void MidiGenerator::updateArpNotes(int scaleID, int chordID)
 {
-    // Legge le note della scala e dell'accordo
+    // Read the notes of the scale and chord
     std::vector<int> scaleNotes = getScaleNotes(scaleID);
     std::vector<int> chordNotes = getChordNotes(chordID);
 
@@ -40,17 +40,18 @@ void MidiGenerator::updateArpNotes(int scaleID, int chordID)
         {
             if (i < scaleNotes.size())
             {
-                // Scrive la nota della scala nello slot in modo thread-safe
+                // Writes the scale note to the slot in a thread-safe way
                 arpNoteSlots[r][i].store(scaleNotes[i]);
             }
             else
             {
-                // Slot vuoto se non ci sono abbastanza note nella scala
+                // Empty slot if there are not enough notes in the scale
                 arpNoteSlots[r][i].store(-1);
             }
         }
-        // Attiva l'ARP
+        // Active the ARP
         arpEnabled[r].store(true);
     }
 }
+
 
