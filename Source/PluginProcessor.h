@@ -4,7 +4,8 @@
 
 struct MidiPortEvent
 {
-    int portIndex;
+    int rhythmIndex;        // 0–5 (CHIAVE CORRETTA)
+    int deviceIndex;        // MIDI device
     juce::MidiMessage message;
     int sampleOffset;
 };
@@ -47,9 +48,66 @@ public:
     // Midi Generator
     MidiGenerator midiGen;
 
+    // ================== NOTE SOURCE TYPES ==================
+    enum class NoteSourceType
+    {
+        Single,
+        Scale,
+        Chord
+    };
+
+    // Struttura per memorizzare le info scelte da GUI
+    struct NoteSource
+    {
+        NoteSourceType type = NoteSourceType::Single;
+        int value = 60; // default C4 per Single, o ID di Scale/Chord
+    };
+
+    // Array per ogni row
+    NoteSource noteSources[6];
+
+    // ===== MIDI OUTPUT ENUMERATION =====
+    const juce::Array<juce::MidiDeviceInfo>& getAvailableMidiOutputs() const
+    {
+        return availableMidiOutputs;
+    }
+
+    // ===== MIDI OUTPUT ENUMERATION & HOT-PLUG (REFRESH EDITOR SAFE) =====
+    /** Aggiorna lista porte MIDI disponibili, chiude porte non valide e gestisce hot-plug */
+    void refreshMidiOutputs();
+    void updateMidiOutputForRhythm(int rhythmIndex, int deviceIndex);
+
 private:
+    // ===== MIDI OUTPUT PORTS (GLOBAL LIST) =====
+    juce::Array<juce::MidiDeviceInfo> availableMidiOutputs;
+
+    // ===== PER-RHYTHM MIDI OUTPUT =====
+    struct RhythmMidiOut
+    {
+        int selectedPortIndex = -1;
+        int selectedChannel = 1; // 1–16
+        std::unique_ptr<juce::MidiOutput> output;
+    };
+
+    std::array<RhythmMidiOut, 6> rhythmMidiOuts;
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     std::vector<MidiPortEvent> stagedMidiEvents;
+
+    // ===== BASS (R6) LEGATO / GLIDE STATE =====
+    int lastBassNote = -1;
+    bool bassNoteActive = false;
+
+    // Glide / Portamento
+    double bassGlideTimeSeconds = 0.08; // default 80 ms
+    double bassGlideProgress = 0.0;
+    int bassStartNote = -1;
+    int bassTargetNote = -1;
+    bool bassGlideActive = false;
+
+    // ===== BASS GLIDE CURVE / RANGE =====
+    float bassGlideCurve = 0.6f;   // 0 = lineare, <1 log, >1 exp
+    int bassPitchBendRange = 12;   // semitoni (2 o 12 tipico)
 
     // ================= CLOCK STATE =================
     enum class ClockSource
@@ -58,7 +116,6 @@ private:
         Internal,
         External
     };
-
 
     double currentSampleRate = 44100.0;
     double samplesPerBeat = 0.0;
@@ -72,7 +129,7 @@ private:
     std::array<int64_t, 6> stepCounterPerRhythm{};
     // ===== MICROTIMING PER STEP INDEX =====
     std::array<std::vector<double>, 6> stepMicrotiming;
-    // ===== NOTE-OFF BUFFER CROSSING (BASS Rhythm 6) =====
+    // ===== NOTE-OFF BUFFER CROSSING (BASSO) =====
     struct PendingNoteOff
     {
         int channel = 1;
@@ -90,7 +147,9 @@ private:
 
     bool isPlaying = false;
 
+    std::atomic<bool> globalPlayState{ false };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Euclidean_seqAudioProcessor)
 };
-#pragma once
+
 
