@@ -186,17 +186,18 @@ private:
     bool directionUp = true;
 
 public:
-    // Copia DISABILITATA (FONDAMENTALE)
+    // Copying DISABLED (ESSENTIAL)
     Arp(const Arp&) = delete;
     Arp& operator=(const Arp&) = delete;
 
-    // Move ABILITATO
+    // Move ENABLED
     Arp(Arp&&) noexcept = default;
     Arp& operator=(Arp&&) noexcept = default;
 
 private:
     JUCE_LEAK_DETECTOR(Arp)
 };
+
 
 
 
