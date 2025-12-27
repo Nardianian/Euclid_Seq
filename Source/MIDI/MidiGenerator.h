@@ -1,4 +1,3 @@
-/*
 #pragma once
 #include <JuceHeader.h>
 #include <algorithm>
@@ -136,6 +135,33 @@ public:
 
         return notes;
     }
+
+    // ===== GUI / HOST: note scale/chord helper =====
+    std::vector<int> getScaleNotes(int scaleID) const;
+    std::vector<int> getChordNotes(int chordID) const;
+
+    // ===== AGGIUNTA: aggiorna note ARP =====
+    void updateArpNotes(int scaleID, int chordID);
+
+    // ===== SET ARP NOTES FROM PROCESSOR (THREAD-SAFE) =====
+// notes: vettore di note MIDI già risolte (max 7)
+    void setArpNotes(int rhythmIndex, const std::vector<int>& notes)
+    {
+        if (rhythmIndex < 0 || rhythmIndex >= 6)
+            return;
+
+        auto& slots = arpNoteSlots[rhythmIndex];
+
+        for (int i = 0; i < 7; ++i)
+        {
+            if (i < (int)notes.size())
+                slots[i].store(notes[i]);
+            else
+                slots[i].store(-1);
+        }
+    }
 };
-#pragma once
+
+
+
 
