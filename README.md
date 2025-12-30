@@ -1,4 +1,4 @@
-Work in Progress, at this moment not finished, unstable, crash.
+Work in Progress, at this moment not finished, unstable.
 
 Project on Windows 11 Home using Juce 8.0.12 (starting with 8.0.10 and continued with 8.0.11) and Visual Studio 2026 Insiders (starting with Visual Studio Community Edition 2022 v17), for plugins and standalone for Windows x64. 
 The project planning is still ongoing and subject to constant changes; it is currently planned to involves programming a MIDI generator for six independent euclidean rhythms with the following features:
