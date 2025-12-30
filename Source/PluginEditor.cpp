@@ -1,27 +1,29 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
+namespace
+{
+    constexpr float mmToPx = 96.0f / 25.4f;
+}
 
+//==============================================================================
 Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_seqAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
-    setSize(1350, 765);
+    setSize(baseWidth, baseHeight);
+    setResizable(true, true);
+    setResizeLimits(baseWidth / 2, baseHeight / 2, baseWidth * 2, baseHeight * 2);
+    getConstrainer()->setFixedAspectRatio((double)baseWidth / (double)baseHeight);
 
     addAndMakeVisible(clockSettingsButton);
-    clockSettingsButton.onClick = [this]()
-        {
-            openClockSettingsPopup();
-        };
+    clockSettingsButton.onClick = [this]() { openClockSettingsPopup(); };
+
     // ================= GLOBAL PLAY =================
     addAndMakeVisible(playButton);
     playButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::green);
     playButton.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
     playButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey);
     playButton.setClickingTogglesState(true);
-    playButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey);
-    playButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::green);
-    playButton.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
     playButton.setTooltip("Global Play / Stop");
 
     playAttachment = std::make_unique<ButtonAttachment>(
@@ -29,25 +31,7 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         "globalPlay",
         playButton);
 
-    // ===== Bass (R6) Settings Button =====
-    addAndMakeVisible(bassSettingsButton);
-    bassSettingsButton.setTooltip("Open Bass (R6) Settings");
-
-    bassSettingsButton.onClick = [this]()
-        {
-            auto* bassComp = new BassSettingsComponent(audioProcessor.parameters);
-            bassComp->setSize(320, 260);
-
-            bassPopup.reset(new juce::CallOutBox(
-                *bassComp,
-                bassSettingsButton.getScreenBounds(),
-                nullptr));
-
-            bassPopup->setAlwaysOnTop(true);
-            bassPopup->enterModalState(true);
-        };
-
-    // ===================== RANDOMIZE BUTTON =====================
+    // ================= RANDOMIZE BUTTON =================
     addAndMakeVisible(randomizeButton);
     randomizeButton.setButtonText("Randomize");
     randomizeButton.onClick = [this]()
@@ -57,42 +41,24 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
                 auto& row = rhythmRows[r];
                 auto& params = audioProcessor.parameters;
 
-                // Random note
                 if (auto* noteParam = params.getParameter("rhythm" + juce::String(r) + "_note"))
                     noteParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat());
-
-                // Random steps
                 if (auto* stepsParam = params.getParameter("rhythm" + juce::String(r) + "_steps"))
                     stepsParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat());
-
-                // Random pulses
                 if (auto* pulsesParam = params.getParameter("rhythm" + juce::String(r) + "_pulses"))
                     pulsesParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat());
-
-                // Random swing
                 if (auto* swingParam = params.getParameter("rhythm" + juce::String(r) + "_swing"))
                     swingParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat());
-
-                // Random microtiming
                 if (auto* microParam = params.getParameter("rhythm" + juce::String(r) + "_microtiming"))
-                    microParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f); // [-1,1]
-
-                // Random velocity
+                    microParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat() * 2.0f - 1.0f);
                 if (auto* velParam = params.getParameter("rhythm" + juce::String(r) + "_velocityAccent"))
                     velParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat());
-
-                // Random note length
                 if (auto* lenParam = params.getParameter("rhythm" + juce::String(r) + "_noteLength"))
                     lenParam->setValueNotifyingHost(juce::Random::getSystemRandom().nextFloat());
             }
         };
 
-    //==================== CLOCK BPM SLIDER ====================
-    addAndMakeVisible(clockBpmSlider);
-    clockBpmSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    clockBpmSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 20);
-
-    // Header labels
+    // ================= HEADER LABELS =================
     const char* labelsText[14] =
     {
         "Active", "Note", "Steps", "Pulses", "Swing", "Micro", "Velocity", "NoteLen",
@@ -105,94 +71,81 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         headerLabels[i].setJustificationType(juce::Justification::centred);
     }
 
-    // Rhythm rows
+    // ================= RHYTHM ROWS =================
     for (int i = 0; i < 6; ++i)
     {
         auto& row = rhythmRows[i];
-        // ===== NOTE SOURCE BUTTON (Single / Scale / Chord) PRIMA PARTE =====
-        addAndMakeVisible(row.noteSourceButton);
-        row.noteSourceButton.setTooltip("Select Note, Scale or Chord source");
 
+        // ===== ROW LABEL (R1–R6) =====
+        addAndMakeVisible(row.rowLabel);
+        row.rowLabel.setText("R" + juce::String(i + 1), juce::dontSendNotification);
+        row.rowLabel.setJustificationType(juce::Justification::centred);
+        row.rowLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+
+        // ===== ACTIVE BUTTON =====
+        addAndMakeVisible(row.activeButton);
+        row.activeButton.setClickingTogglesState(true);
+
+        rhythmAttachments[i].active =
+            std::make_unique<ButtonAttachment>(
+                audioProcessor.parameters,
+                "rhythm" + juce::String(i) + "_active",
+                row.activeButton);
+
+        // ===== MUTE / SOLO / RESET =====
+        addAndMakeVisible(row.muteButton);
+        addAndMakeVisible(row.soloButton);
+        addAndMakeVisible(row.resetButton);
+
+        rhythmAttachments[i].mute =
+            std::make_unique<ButtonAttachment>(
+                audioProcessor.parameters,
+                "rhythm" + juce::String(i) + "_mute",
+                row.muteButton);
+
+        rhythmAttachments[i].solo =
+            std::make_unique<ButtonAttachment>(
+                audioProcessor.parameters,
+                "rhythm" + juce::String(i) + "_solo",
+                row.soloButton);
+
+        rhythmAttachments[i].reset =
+            std::make_unique<ButtonAttachment>(
+                audioProcessor.parameters,
+                "rhythm" + juce::String(i) + "_reset",
+                row.resetButton);
+
+        // ===== BASS BUTTON (ONLY R6) =====
+        if (i == 5)
+        {
+            addAndMakeVisible(bassSettingsButton);
+            bassSettingsButton.onClick = [this]()
+                {
+                    auto* comp = new BassSettingsComponent(audioProcessor.parameters);
+
+                    // >>> MANDATORY DIMENSIONS <<<
+                    comp->setSize(320, 260);
+
+                    bassPopup.reset(new juce::CallOutBox(
+                        *comp,
+                        bassSettingsButton.getScreenBounds(),
+                        nullptr));
+
+                    bassPopup->setAlwaysOnTop(true);
+                    bassPopup->enterModalState(true);
+                };
+        }
+
+        // Setup rotary knobs
         auto setupRotary = [](juce::Slider& s)
             {
                 s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
                 s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 42, 16);
-                // Garantisce visibilità su Windows 11 / LookAndFeel V4
                 s.setColour(juce::Slider::rotarySliderFillColourId, juce::Colours::orange);
                 s.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colours::black);
                 s.setColour(juce::Slider::thumbColourId, juce::Colours::white);
                 s.setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
                 s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-            };
-
-        addAndMakeVisible(row.activeButton);
-
-        row.rowLabel.setText("R" + juce::String(i + 1), juce::dontSendNotification);
-        row.rowLabel.setJustificationType(juce::Justification::centredLeft);
-        addAndMakeVisible(row.rowLabel);
-
-        // ===== NOTE SOURCE BUTTON (Single Note / Scale / Chord) =====
-        row.noteSourceButton.onClick = [this, i]()
-            {
-                juce::PopupMenu menu;
-
-                // ================= SINGLE NOTES =================
-                juce::PopupMenu noteMenu;
-                for (int note = 21; note <= 108; ++note) 
-                    noteMenu.addItem(note, juce::MidiMessage::getMidiNoteName(note, true, true, 3));
-                menu.addSubMenu("Single Note", noteMenu);
-
-                // ================= SCALES =================
-                juce::PopupMenu scaleMenu;
-                scaleMenu.addItem(1001, "Major");
-                scaleMenu.addItem(1002, "Minor");
-                scaleMenu.addItem(1003, "Dorian");
-                scaleMenu.addItem(1004, "Phrygian");
-                scaleMenu.addItem(1005, "Lydian");
-                scaleMenu.addItem(1006, "Mixolydian");
-                scaleMenu.addItem(1007, "Locrian");
-                scaleMenu.addItem(1008, "Pentatonic Major");
-                scaleMenu.addItem(1009, "Pentatonic Minor");
-                menu.addSubMenu("Scale", scaleMenu);
-
-                // ================= CHORDS =================
-                juce::PopupMenu chordMenu;
-                chordMenu.addItem(2001, "Major");
-                chordMenu.addItem(2002, "Minor");
-                chordMenu.addItem(2003, "Diminished");
-                chordMenu.addItem(2004, "Augmented");
-                chordMenu.addItem(2005, "Major 7");
-                chordMenu.addItem(2006, "Minor 7");
-                chordMenu.addItem(2007, "Dominant 7");
-                chordMenu.addItem(2008, "Suspended 2");
-                chordMenu.addItem(2009, "Suspended 4");
-                menu.addSubMenu("Chord", chordMenu);
-
-                // ================= CALLBACK =================
-                menu.showMenuAsync(
-                    juce::PopupMenu::Options(),
-                    [this, i](int result)
-                    {
-                        if (result <= 0)
-                            return;
-
-                        auto& button = rhythmRows[i].noteSourceButton;
-
-                        // ===== FEEDBACK GUI =====
-                        if (result < 1000)
-                            button.setButtonText(juce::MidiMessage::getMidiNoteName(result, true, true, 3));
-                        else if (result < 2000)
-                            button.setButtonText("Scale");
-                        else
-                            button.setButtonText("Chord");
-
-                        // ===== PARAMETER UPDATE =====
-                        if (auto* param = audioProcessor.parameters.getParameter("rhythm" + juce::String(i) + "_note"))
-                        {
-                            // Normalize value between 0.0f and 1.0f if needed, or use the ID directly
-                            param->setValueNotifyingHost((float)result);
-                        }
-                    });
             };
 
         setupRotary(row.stepsKnob);
@@ -202,6 +155,83 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         setupRotary(row.velocityKnob);
         setupRotary(row.noteLenKnob);
 
+        addAndMakeVisible(row.noteSourceButton);
+        row.noteSourceButton.setButtonText("Note");
+        row.noteSourceButton.onClick = [this, i]()
+            {
+                juce::PopupMenu menu;
+
+                juce::PopupMenu singleMenu;
+                static const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+
+                int id = 100;
+                for (int octave = 0; octave <= 8; ++octave)
+                {
+                    for (int n = 0; n < 12; ++n)
+                    {
+                        int midiNote = octave * 12 + n;
+                        if (midiNote > 127) continue;
+
+                        singleMenu.addItem(
+                            id++,
+                            juce::String(noteNames[n]) + juce::String(octave));
+                    }
+                }
+
+                juce::PopupMenu scaleMenu;
+                scaleMenu.addItem(200, "Major");
+                scaleMenu.addItem(201, "Minor");
+                scaleMenu.addItem(202, "Dorian");
+                scaleMenu.addItem(203, "Phrygian");
+                scaleMenu.addItem(204, "Lydian");
+                scaleMenu.addItem(205, "Mixolydian");
+
+                juce::PopupMenu chordMenu;
+                chordMenu.addItem(300, "Major");
+                chordMenu.addItem(301, "Minor");
+                chordMenu.addItem(302, "Diminished");
+                chordMenu.addItem(303, "Augmented");
+                chordMenu.addItem(304, "Major 7");
+                chordMenu.addItem(305, "Minor 7");
+
+                menu.addSubMenu("Single Note", singleMenu);
+                menu.addSubMenu("Scale", scaleMenu);
+                menu.addSubMenu("Chord", chordMenu);
+
+                menu.showMenuAsync(juce::PopupMenu::Options(),
+                    [this, i](int result)
+                    {
+                        if (result <= 0) return;
+
+                        auto& src = audioProcessor.noteSources[i];
+
+                        // ===== SINGLE NOTE =====
+                        if (result >= 100 && result < 200)
+                        {
+                            src.type = Euclidean_seqAudioProcessor::NoteSourceType::Single;
+                            src.value = result - 100;
+                            rhythmRows[i].noteSourceButton.setButtonText("Note");
+                            audioProcessor.updateRowInputNotes(i);
+                        }
+                        // ===== SCALE =====
+                        else if (result >= 200 && result < 300)
+                        {
+                            src.type = Euclidean_seqAudioProcessor::NoteSourceType::Scale;
+                            src.value = result - 200;
+                            rhythmRows[i].noteSourceButton.setButtonText("Scale");
+                            audioProcessor.updateRowInputNotes(i);
+                        }
+                        // ===== CHORD =====
+                        else if (result >= 300)
+                        {
+                            src.type = Euclidean_seqAudioProcessor::NoteSourceType::Chord;
+                            src.value = result - 300;
+                            rhythmRows[i].noteSourceButton.setButtonText("Chord");
+                            audioProcessor.updateRowInputNotes(i);
+                        }
+                    });
+            };
+
         addAndMakeVisible(row.stepsKnob);
         addAndMakeVisible(row.pulsesKnob);
         addAndMakeVisible(row.swingKnob);
@@ -209,27 +239,34 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         addAndMakeVisible(row.velocityKnob);
         addAndMakeVisible(row.noteLenKnob);
 
-        // ARP
+        // ARP Buttons
         addAndMakeVisible(row.arpActive);
-        row.arpMode.addItem("UP", 1);
-        row.arpMode.addItem("DOWN", 2);
-        row.arpMode.addItem("UP_DOWN", 3);
-        row.arpMode.addItem("RANDOM", 4);
-        addAndMakeVisible(row.arpMode);
-        row.arpRateBox.addItemList(
-            { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16D" }, 1);
-        addAndMakeVisible(row.arpRateBox);
 
         addAndMakeVisible(row.arpNotesButton);
         row.arpNotesButton.setButtonText("Notes");
         row.arpNotesButton.onClick = [this, i]()
             {
+                auto& arpSlots = audioProcessor.midiGen.arpNotes[i]; // <- unique definition
+
+                auto inputNotes = audioProcessor.midiGen.getArpInputNotes(i);
+
                 juce::PopupMenu menu;
 
-                // Notes actually received from the rhythm
-                auto inputNotes = audioProcessor.midiGen.getArpInputNotes(i);
-                auto& slots = audioProcessor.midiGen.arpNoteSlots[i];
+                // Show full popup 0–127
+                for (int note = 0; note <= 127; ++note)
+                {
+                    bool selected = false;
+                    for (size_t s = 0; s < arpSlots.size(); ++s)
+                        if (arpSlots[s] == note)
+                            selected = true;
 
+                    menu.addItem(1 + note,
+                        juce::MidiMessage::getMidiNoteName(note, true, true, 3),
+                        true,
+                        selected);
+                }
+
+                // Shows received notes
                 if (inputNotes.empty())
                 {
                     menu.addItem(1, "No notes received yet", false);
@@ -239,167 +276,83 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
                     for (int midiNote : inputNotes)
                     {
                         bool selected = false;
-
-                        for (int s = 0; s < 7; ++s)
-                        {
-                            if (slots[s].load() == midiNote)
-                            {
+                        for (size_t s = 0; s < arpSlots.size(); ++s)
+                            if (arpSlots[s] == midiNote)
                                 selected = true;
-                                break;
-                            }
-                        }
 
-                        menu.addItem(
-                            1 + midiNote,
+                        menu.addItem(1 + midiNote,
                             juce::MidiMessage::getMidiNoteName(midiNote, true, true, 3),
                             true,
                             selected);
                     }
                 }
 
-                menu.showMenuAsync(
-                    juce::PopupMenu::Options(),
-                    [this, i](int result)
+                menu.showMenuAsync(juce::PopupMenu::Options(),
+                    [this, &arpSlots](int result)
                     {
-                        if (result <= 0)
-                            return;
+                        if (result <= 0) return;
 
                         int midiNote = result - 1;
-                        auto& slots = audioProcessor.midiGen.arpNoteSlots[i];
 
-                        // Toggle select / deselect
-                        for (int s = 0; s < 7; ++s)
+                        // Toggle
+                        for (size_t s = 0; s < arpSlots.size(); ++s)
                         {
-                            if (slots[s].load() == midiNote)
+                            if (arpSlots[s] == midiNote)
                             {
-                                slots[s].store(-1);
+                                arpSlots[s] = -1;
                                 return;
                             }
                         }
 
-                        // Add if free slot exists
-                        for (int s = 0; s < 7; ++s)
+                        // Add if free slot
+                        for (size_t s = 0; s < arpSlots.size(); ++s)
                         {
-                            if (slots[s].load() < 0)
+                            if (arpSlots[s] < 0)
                             {
-                                slots[s].store(midiNote);
+                                arpSlots[s] = midiNote;
                                 return;
                             }
                         }
                     });
             };
 
-        // MIDI
-        addAndMakeVisible(row.midiPortLabel);
-        row.midiPortLabel.setText("Port", juce::dontSendNotification);
+        addAndMakeVisible(row.arpMode);
+        row.arpMode.addItem("UP", 1);
+        row.arpMode.addItem("DOWN", 2);
+        row.arpMode.addItem("UP_DOWN", 3);
+        row.arpMode.addItem("RANDOM", 4);
+
+        addAndMakeVisible(row.arpRateBox);
+        row.arpRateBox.addItemList({ "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16D" }, 1);
+
+        // ===== MIDI PORT =====
         addAndMakeVisible(row.midiPortBox);
-        addAndMakeVisible(row.midiChannelLabel);
-        row.midiChannelLabel.setText("Ch", juce::dontSendNotification);
         addAndMakeVisible(row.midiChannelBox);
+
+        // ===== MIDI CHANNEL (1–16) =====
         row.midiChannelBox.clear();
         for (int ch = 1; ch <= 16; ++ch)
-            row.midiChannelBox.addItem(juce::String(ch), ch);
+            row.midiChannelBox.addItem("Ch " + juce::String(ch), ch);
 
-        clockSettingsButton.setTooltip("Open Clock Settings");
-        clockBpmSlider.setTooltip("Set Internal Clock BPM");
-        for (int r = 0; r < 6; ++r)
-        {
-            rhythmRows[r].noteSourceButton.setTooltip("Select Note, Scale or Chord source");
-            rhythmRows[r].stepsKnob.setTooltip("Number of steps");
-            rhythmRows[r].pulsesKnob.setTooltip("Number of pulses in pattern");
-            rhythmRows[r].swingKnob.setTooltip("Swing amount");
-            rhythmRows[r].microKnob.setTooltip("Microtiming offset");
-            rhythmRows[r].velocityKnob.setTooltip("Velocity / Accent");
-            rhythmRows[r].noteLenKnob.setTooltip("Note length");
-            rhythmRows[r].arpActive.setTooltip("Enable arpeggiator");
-            rhythmRows[r].arpMode.setTooltip("ARP Mode (UP, DOWN, RANDOM, etc.)");
-            rhythmRows[r].arpRateBox.setTooltip("ARP musical rate (1/4, 1/8T, 1/16D, etc.)");
-            rhythmRows[r].arpNotesButton.setTooltip("Number of ARP notes");
-            rhythmRows[r].midiPortBox.setTooltip("Select MIDI Output Port");
-            rhythmRows[r].midiChannelBox.setTooltip("Select MIDI Channel");
-        }
+        row.midiChannelBox.setSelectedId(1, juce::dontSendNotification);
 
-        addAndMakeVisible(row.muteButton);
-        addAndMakeVisible(row.soloButton);
-        addAndMakeVisible(row.resetButton);
+        rhythmAttachments[i].midiPort =
+            std::make_unique<ComboBoxAttachment>(
+                audioProcessor.parameters,
+                "rhythm" + juce::String(i) + "_midiPort",
+                row.midiPortBox);
 
-        // ===== Force text visibility for M / S =====
-        row.muteButton.setButtonText("M");
-        row.soloButton.setButtonText("S");
-
-        // ===== MUTE / SOLO as illuminated buttons =====
-        row.muteButton.setClickingTogglesState(true);
-        row.soloButton.setClickingTogglesState(true);
-
-        auto& att = rhythmAttachments[i];
-        auto& params = audioProcessor.parameters;
-
-        att.active = std::make_unique<ButtonAttachment>(
-            params, "rhythm" + juce::String(i) + "_active", row.activeButton);
-
-        // Normal button color
-        row.muteButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey);
-        row.soloButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey);
-
-        // Button color when pressed
-        row.muteButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::darkred);
-        row.soloButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::darkgreen);
-
-        // Text Colour
-        row.muteButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        row.soloButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        row.muteButton.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
-        row.soloButton.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
-
-        att.mute = std::make_unique<ButtonAttachment>(
-            params, "rhythm" + juce::String(i) + "_mute", row.muteButton);
-
-        att.solo = std::make_unique<ButtonAttachment>(
-            params, "rhythm" + juce::String(i) + "_solo", row.soloButton);
-
-        att.reset = std::make_unique<ButtonAttachment>(
-            params, "rhythm" + juce::String(i) + "_reset", row.resetButton);
-
-        att.steps = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_steps", row.stepsKnob);
-
-        att.pulses = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_pulses", row.pulsesKnob);
-
-        att.swing = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_swing", row.swingKnob);
-
-        att.micro = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_microtiming", row.microKnob);
-
-        att.velocity = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_velocityAccent", row.velocityKnob);
-
-        att.noteLen = std::make_unique<SliderAttachment>(
-            params, "rhythm" + juce::String(i) + "_noteLength", row.noteLenKnob);
-
-        att.arpActive = std::make_unique<ButtonAttachment>(
-            params, "rhythm" + juce::String(i) + "_arpActive", row.arpActive);
-
-        att.arpMode = std::make_unique<ComboBoxAttachment>(
-            params, "rhythm" + juce::String(i) + "_arpMode", row.arpMode);
-
-        att.arpRate = std::make_unique<ComboBoxAttachment>(
-            params, "rhythm" + juce::String(i) + "_arpRate", row.arpRateBox);
-
-        // MIDI Port
-        att.midiPort = std::make_unique<ComboBoxAttachment>(
-            params, "rhythm" + juce::String(i) + "_midiPort", row.midiPortBox);
-
-        // MIDI Channel
-        att.midiChannel = std::make_unique<ComboBoxAttachment>(
-            params, "rhythm" + juce::String(i) + "_midiChannel", row.midiChannelBox);
+        rhythmAttachments[i].midiChannel =
+            std::make_unique<ComboBoxAttachment>(
+                audioProcessor.parameters,
+                "rhythm" + juce::String(i) + "_midiChannel",
+                row.midiChannelBox);
     }
 
-    // ================= MIDI OUTPUT PORT ENUMERATION =================
+    // ===== HOT-PLUG MIDI GUI =====
     auto refreshMidiBox = [this](juce::ComboBox& box, const juce::Array<juce::MidiDeviceInfo>& midiDevices, std::atomic<float>* param)
         {
-            int currentId = box.getSelectedId();  // salva selezione corrente
+            int currentId = box.getSelectedId();
             box.clear();
 
             if (midiDevices.isEmpty())
@@ -422,7 +375,6 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
             }
             else
             {
-                // fallback: reset selection if still valid
                 int deviceIndex = currentId - 1;
                 if (deviceIndex >= 0 && deviceIndex < midiDevices.size())
                     box.setSelectedId(deviceIndex + 1, juce::dontSendNotification);
@@ -433,7 +385,6 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
 
     audioProcessor.refreshMidiOutputs();
     const auto& midiDevices = audioProcessor.getAvailableMidiOutputs();
-
     for (int r = 0; r < 6; ++r)
     {
         auto* param = audioProcessor.parameters.getRawParameterValue("rhythm" + juce::String(r) + "_midiPort");
@@ -444,66 +395,49 @@ Euclidean_seqAudioProcessorEditor::Euclidean_seqAudioProcessorEditor(Euclidean_s
         audioProcessor.parameters, "clockBPM", clockBpmSlider);
 
     startTimerHz(60);
+
+    addAndMakeVisible(versionLabel);
+    versionLabel.setText(ProjectInfo::versionString, juce::dontSendNotification);
+    versionLabel.setJustificationType(juce::Justification::centredRight);
+    versionLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    versionLabel.setColour(juce::Label::textColourId, juce::Colours::white);
 }
 
+// Update the ARP GUI
 void Euclidean_seqAudioProcessorEditor::updateArpGui()
 {
-    // Aggiorna la GUI leggendo direttamente le note dagli arpNotes
     for (int row = 0; row < 6; ++row)
     {
         const auto& notes = audioProcessor.midiGen.arpNotes[row];
-
-        // Stampa su console le note (solo per debug, sostituire con GUI reale)
         DBG("Ritmo " << row << " ARP Notes: ");
         for (auto note : notes)
             DBG(" " << note);
     }
-
-    // Redesign editor
     repaint();
 }
-
-
 
 Euclidean_seqAudioProcessorEditor::~Euclidean_seqAudioProcessorEditor() {}
 
 void Euclidean_seqAudioProcessorEditor::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colours::darkgrey);
-}
-
-void Euclidean_seqAudioProcessorEditor::openClockSettingsPopup()
-{
-    auto* dialog = new ClockSettingsDialog([this](int newSource)
-        {
-            if (auto* param = audioProcessor.parameters.getParameter("clockSource"))
-                param->setValueNotifyingHost(newSource - 1); // ComboBox ID 1 = DAW = value 0
-        });
-
-    dialog->setSize(220, 100);
-
-    // Still the popup ABOVE the ClockSettings button
-    clockPopup.reset(new juce::CallOutBox(
-        *dialog,
-        clockSettingsButton.getScreenBounds(),
-        nullptr));
-
-    clockPopup->setAlwaysOnTop(true);
-    clockPopup->enterModalState(true);
+    g.addTransform(juce::AffineTransform::scale(guiScale));
 }
 
 void Euclidean_seqAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced(10);
+    // ===== AUTO SCALE CALCULATION =====
+    const float scaleX = (float)getWidth() / (float)baseWidth;
+    const float scaleY = (float)getHeight() / (float)baseHeight;
+    guiScale = juce::jmin(scaleX, scaleY);
+    repaint();
 
     const int headerHeight = 40;
-    const int rowHeight = 90;   // Row height for the first row
-    const int rowHeightWithSpacing = 110;   // Let's add a margin (with extra height) for lines 2-6
+    const int rowHeight = 90;
     const int knobSize = 100;
-    const int valueHeight = 15;
 
     // ================= COLUMN DEFINITIONS =================
-    const int startX = 40;   // margine sinistro
+    const int startX = 40;
     const int colSpacing = 85;
 
     enum Column
@@ -529,7 +463,7 @@ void Euclidean_seqAudioProcessorEditor::resized()
     for (int c = 0; c < NUM_COLUMNS; ++c)
         columnX[c] = startX + c * colSpacing;
 
-    // ================= HEADER =================
+    // ===== HEADER =====
     for (int i = 0; i < NUM_COLUMNS; ++i)
     {
         headerLabels[i].setBounds(
@@ -539,36 +473,15 @@ void Euclidean_seqAudioProcessorEditor::resized()
             headerHeight);
     }
 
-// ================= CLOCK + TRANSPORT =================
-
+    // ================= TRANSPORT =================
     const int bottomMargin = 50;
     const int buttonHeight = 30;
-    const int playButtonWidth = 90;
-    const int playClockSpacing = 10; // space between PLAY and Clock Settings
 
-    // Clock (right)
-    clockSettingsButton.setBounds(
-        getWidth() - 180,
-        getHeight() - bottomMargin,
-        170,
-        buttonHeight);
-
-    clockBpmSlider.setBounds(
-        getWidth() - 360,
-        getHeight() - bottomMargin,
-        170,
-        buttonHeight);
-
-    // PLAY (bottom center)
-    playButton.setBounds(
-        (getWidth() - playButtonWidth) / 2,  // Horizontally centered positioning
-        getHeight() - bottomMargin,          // Aligned at the bottom
-        playButtonWidth,
-        buttonHeight);
+    clockSettingsButton.setBounds(getWidth() - 180, getHeight() - bottomMargin, 170, buttonHeight);
+    clockBpmSlider.setBounds(getWidth() - 360, getHeight() - bottomMargin, 170, buttonHeight);
+    playButton.setBounds((getWidth() - 90) / 2, getHeight() - bottomMargin, 90, buttonHeight);
 
     // ================= RHYTHM ROWS =================
-    // 5 mm real for EACH row (DPI aware)
-    const float mmToPx = 96.0f / 25.4f;
     const int rowGapPx = juce::roundToInt(5.0f * mmToPx * getDesktopScaleFactor());
 
     for (int r = 0; r < 6; ++r)
@@ -576,107 +489,89 @@ void Euclidean_seqAudioProcessorEditor::resized()
         auto& row = rhythmRows[r];
 
         int y = headerHeight + r * rowHeight;
-
-        // Move ONLY from R2 onwards
-        if (r >= 1)
+        if (r > 0)
             y += r * rowGapPx;
 
-        // Row label R1–R6
-        row.rowLabel.setBounds(columnX[COL_ACTIVE] - 30, y + 6, 25, 20);
+        // Row label
+        row.rowLabel.setBounds(columnX[COL_ACTIVE] - 35, y, 30, 20);
 
-        // Row Active Button (keep only the first one)
-        row.activeButton.setBounds(columnX[COL_ACTIVE] - 2, y, 26, 26);  // (Box attivazione 1)
+        // Active Button
+        row.activeButton.setBounds(columnX[COL_ACTIVE] - 2, y+10, 30, 30);
+        row.activeButton.setClickingTogglesState(true);
+        // M/S/R sotto Active
+        const int subY = y + 45;
+        row.muteButton.setBounds(columnX[COL_ACTIVE] - 6, subY, 24, 24);
+        row.soloButton.setBounds(columnX[COL_ACTIVE] + 22, subY, 24, 24);
+        row.resetButton.setBounds(columnX[COL_ACTIVE] + 50, subY, 24, 24);
 
-        // M / S / R under ACTIVE (under R1–R6)
-        const int subY = y + 30;
-        const int subX = columnX[COL_ACTIVE] - 6;
-
-        row.muteButton.setBounds(subX, subY, 20, 20);
-        row.soloButton.setBounds(subX + 22, subY, 20, 20);
-        row.resetButton.setBounds(subX + 44, subY, 20, 20);
-
-        // Bass Settings Button (only for R6) - ANCHORED TO M/S/R
         if (r == 5)
-        {
-            const int msrHeight = 20;
-            const int msrSpacing = 6;
-            bassSettingsButton.setBounds(
-                subX,
-                subY + msrHeight + msrSpacing,
-                66,
-                22);
-        }
+            bassSettingsButton.setBounds(columnX[COL_ACTIVE] - 6, subY + 30, 80, 26);
 
-        // Note (Notes Scales Cords) Button
-        row.noteSourceButton.setBounds(columnX[COL_NOTE], y, knobSize, knobSize);
+        // Note source
+        row.noteSourceButton.setBounds(columnX[COL_NOTE], y, 80, 80);
 
-        // Rotary knobs + value boxes
-        // We distance the rotary knobs from the boxes below
-        const int knobSpacing = 10;  // Let's add a little space between the knob and the value box
+        // Knobs
         row.stepsKnob.setBounds(columnX[COL_STEPS], y, knobSize, knobSize);
         row.pulsesKnob.setBounds(columnX[COL_PULSES], y, knobSize, knobSize);
         row.swingKnob.setBounds(columnX[COL_SWING], y, knobSize, knobSize);
         row.microKnob.setBounds(columnX[COL_MICRO], y, knobSize, knobSize);
         row.velocityKnob.setBounds(columnX[COL_VELOCITY], y, knobSize, knobSize);
-        row.noteLenKnob.setBounds(
-            columnX[COL_NOTELEN],          // Make sure columnX is treated as an int
-            y,                             // Cast explicit for the sum
-            knobSize,                      // Cast explicit for the knobSize
-            knobSize                       // Cast explicit for the knobSize
-        );
+        row.noteLenKnob.setBounds(columnX[COL_NOTELEN], y, knobSize, knobSize);
 
-        // Arp On
+        // ARP
         row.arpActive.setBounds(columnX[COL_ARP_ON] - 2, y, 26, 26);
-
-        // Arp Notes
         row.arpNotesButton.setBounds(columnX[COL_ARP_NOTES], y, 80, 25);
-
-        // Arp Mode
         row.arpMode.setBounds(columnX[COL_ARP_MODE], y, 80, 25);
-
-        // Arp Rate
         row.arpRateBox.setBounds(columnX[COL_ARP_RATE], y, 80, 25);
 
-        // MIDI
-        row.midiPortBox.setBounds(columnX[COL_MIDI_PORT], y, 80, 25);
-        row.midiChannelBox.setBounds(columnX[COL_MIDI_CH], y, 60, 25);
+		// MIDI OUTPUT
+        row.midiPortBox.setBounds(columnX[COL_MIDI_PORT], y, 90, 25);
+        row.midiChannelBox.setBounds(columnX[COL_MIDI_CH] + 10, y, 60, 25);
     }
+
+    versionLabel.setBounds(getWidth() - 120, 5, 110, 20);
+}
+
+void Euclidean_seqAudioProcessorEditor::openClockSettingsPopup()
+{
+    auto* dialog = new ClockSettingsDialog([this](int newSource)
+        {
+            if (auto* param = audioProcessor.parameters.getParameter("clockSource"))
+                param->setValueNotifyingHost(newSource - 1);
+        });
+
+    dialog->setSize(220, 100);
+    clockPopup.reset(new juce::CallOutBox(*dialog, clockSettingsButton.getScreenBounds(), nullptr));
+    clockPopup->setAlwaysOnTop(true);
+    clockPopup->enterModalState(true);
 }
 
 void Euclidean_seqAudioProcessorEditor::timerCallback()
 {
-    // ===== HOT-PLUG MIDI (GUI THREAD SAFE) =====
     audioProcessor.refreshMidiOutputs();
     const auto& midiDevices = audioProcessor.getAvailableMidiOutputs();
-
     for (int r = 0; r < 6; ++r)
     {
         auto& box = rhythmRows[r].midiPortBox;
-
-        // Save current selection (ComboBox ID)
         int currentId = box.getSelectedId();
-
-        // Rebuild list
         box.clear();
         for (int i = 0; i < midiDevices.size(); ++i)
             box.addItem(midiDevices[i].name, i + 1);
-
         if (midiDevices.isEmpty())
             box.addItem("No MIDI Outputs", 1);
 
-        // Reset selection if still valid
-        int deviceIndex = currentId - 1; // ID → index
+        int deviceIndex = currentId - 1;
         if (deviceIndex >= 0 && deviceIndex < midiDevices.size())
             box.setSelectedId(deviceIndex + 1, juce::dontSendNotification);
         else
             box.setSelectedId(0, juce::dontSendNotification);
     }
 
-    updateArpGui(); // call the function that reads the arpNotes
-
-    // ===== GUI REFRESH =====
+    updateArpGui();
     repaint();
 }
+
+
 
 
 
