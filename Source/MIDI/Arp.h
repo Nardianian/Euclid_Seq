@@ -190,13 +190,15 @@ public:
     Arp(const Arp&) = delete;
     Arp& operator=(const Arp&) = delete;
 
-    // Move ENABLED
+    // Move enabled
     Arp(Arp&&) noexcept = default;
     Arp& operator=(Arp&&) noexcept = default;
 
 private:
     JUCE_LEAK_DETECTOR(Arp)
 };
+
+
 
 
 
