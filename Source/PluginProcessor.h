@@ -1,7 +1,8 @@
 #pragma once 
 #include <JuceHeader.h>
 #include "MidiGenerator.h"
-// Per thread-safety nell'ARP
+
+// For thread safety in ARP
 #include <mutex>
 #include <atomic>
 #include <vector>
@@ -130,10 +131,10 @@ private:
     // ================= MEMBRI ARP =================
     std::mutex arpMutex;
 
-    // Note ARP in ingresso (per riga)
+    // Incoming ARP Notes (per line)
     std::vector<int> arpInputNotes[6];
 
-    // Slot note ARP (max 7 note per riga), thread-safe
+    // ARP note slot (max 7 notes per line), thread-safe
     std::vector<int> arpNotes[6];
 
 public:
@@ -155,4 +156,5 @@ public:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Euclidean_seqAudioProcessor)
 };
+
 
