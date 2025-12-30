@@ -4,6 +4,8 @@
 #include "Euclidean.h"
 #include "Arp.h"
 #include <atomic>
+#include <array>
+#include <vector>
 
 class MidiGenerator
 {
@@ -15,154 +17,57 @@ public:
         arpNotes.resize(6);
 
         for (int r = 0; r < 6; ++r)
-            for (int i = 0; i < 7; ++i)
-                arpNoteSlots[r][i].store(-1);
-
-        for (int r = 0; r < 6; ++r)
             arpEnabled[r].store(false);
     }
 
+    // ===== DATA =====
     std::vector<EuclideanPattern> rhythmPatterns;
     std::vector<Arp> rhythmArps;
-    std::vector<std::vector<int>> arpNotes;
-    // ===== THREAD-SAFE ARP NOTE SLOTS =====
-    // 7 note MIDI reali per rhythm, -1 = slot vuoto
-    std::array<std::array<std::atomic<int>, 7>, 6> arpNoteSlots;
-    // ===== ARP ENABLE FLAGS (thread-safe read) =====
+    std::vector<std::vector<int>> arpNotes; // note ARP effettive per ogni riga
+
+    // ===== THREAD-SAFE FLAGS =====
     std::array<std::atomic<bool>, 6> arpEnabled;
 
-    // ===== NOTES ACTUALLY RECEIVED BY ARP (thread-safe snapshot) =====
-// Bitmask 0–127: note MIDI realmente generate dal ritmo
-    std::array<std::atomic<uint64_t>, 6> arpInputNotesMaskLow{};   // notes 0–63
-    std::array<std::atomic<uint64_t>, 6> arpInputNotesMaskHigh{};  // notes 64–127
+    // ===== NOTES RECEIVED BY ARP (GUI / HOST) =====
+    std::array<std::atomic<uint64_t>, 6> arpInputNotesMaskLow{};   // note 0–63
+    std::array<std::atomic<uint64_t>, 6> arpInputNotesMaskHigh{};  // note 64–127
 
-    bool triggerStep(int rhythmIndex, int baseNote, int& outMidiNote)
+    // ===== FUNCTIONS =====
+    bool triggerStep(int rhythmIndex, int baseNote, int& outMidiNote);
+    bool advanceArp(int rhythmIndex, double samplesPerStep, double samplesPerArpStep);
+
+    // ================= THREAD-SAFE RETRIEVAL OF ARP INPUT NOTES =================
+    inline std::vector<int> getArpInputNotes(int rhythmIndex) const
     {
-        if (rhythmIndex < 0 || rhythmIndex >= 6)
-            return false;
+        jassert(rhythmIndex >= 0 && rhythmIndex < 6);
 
-        auto& pattern = rhythmPatterns[rhythmIndex];
-
-        // Euclidean trigger
-        if (!pattern.nextStep())
-            return false;
-
-        auto& arp = rhythmArps[rhythmIndex];
-        auto& slots = arpNoteSlots[rhythmIndex];
-
-        // ===== ARP deactivated =====
-        if (!arpEnabled[rhythmIndex]) // This flag MUST exist (you already have arpActive)
-        {
-            // ===== REGISTER NOTE AS ARP INPUT =====
-            if (baseNote < 64)
-                arpInputNotesMaskLow[rhythmIndex].fetch_or(1ULL << baseNote);
-            else
-                arpInputNotesMaskHigh[rhythmIndex].fetch_or(1ULL << (baseNote - 64));
-            outMidiNote = baseNote;
-            return true;
-        }
-
-        // ===== CHECK IF BASE NOTE IS SELECTED =====
-        bool isSelected = false;
-        int selectedCount = 0;
-
-        for (int i = 0; i < 7; ++i)
-        {
-            int n = slots[i].load();
-            if (n >= 0)
-            {
-                selectedCount++;
-                if (n == baseNote)
-                    isSelected = true;
-            }
-        }
-
-        // No notes selected → everything passes unchanged
-        if (selectedCount == 0 || !isSelected)
-        {
-            outMidiNote = baseNote;
-            return true;
-        }
-
-        // ===== ARP ACTIVE ONLY ON SELECTED NOTES =====
-        int step = arp.nextStep() % selectedCount;
-        int idx = 0;
-
-        for (int i = 0; i < 7; ++i)
-        {
-            int n = slots[i].load();
-            if (n >= 0)
-            {
-                if (idx == step)
-                {
-                    outMidiNote = n;
-                    return true;
-                }
-                idx++;
-            }
-        }
-
-        // fallback (should never happen)
-        outMidiNote = baseNote;
-        return true;
-    }
-
-    bool advanceArp(int rhythmIndex, double samplesPerStep, double samplesPerArpStep)
-    {
-        if (rhythmIndex < 0 || rhythmIndex >= rhythmArps.size())
-            return false;
-
-        return rhythmArps[rhythmIndex].advance(samplesPerStep, samplesPerArpStep);
-    }
-    // ===== GUI: READ NOTES RECEIVED BY ARP =====
-    std::vector<int> getArpInputNotes(int rhythmIndex) const
-    {
         std::vector<int> notes;
-
-        if (rhythmIndex < 0 || rhythmIndex >= 6)
-            return notes;
-
-        uint64_t low = arpInputNotesMaskLow[rhythmIndex].load();
-        uint64_t high = arpInputNotesMaskHigh[rhythmIndex].load();
+        auto lowMask = arpInputNotesMaskLow[rhythmIndex].load();
+        auto highMask = arpInputNotesMaskHigh[rhythmIndex].load();
 
         for (int i = 0; i < 64; ++i)
-            if (low & (1ULL << i))
+            if (lowMask & (1ULL << i))
                 notes.push_back(i);
-
         for (int i = 0; i < 64; ++i)
-            if (high & (1ULL << i))
+            if (highMask & (1ULL << i))
                 notes.push_back(i + 64);
 
         return notes;
     }
 
-    // ===== GUI / HOST: note scale/chord helper =====
     std::vector<int> getScaleNotes(int scaleID) const;
     std::vector<int> getChordNotes(int chordID) const;
 
-    // ===== AGGIUNTA: updates note ARP =====
     void updateArpNotes(int scaleID, int chordID);
 
-    // ===== SET ARP NOTES FROM PROCESSOR (THREAD-SAFE) =====
-// notes: vettore di note MIDI già risolte (max 7)
-    void setArpNotes(int rhythmIndex, const std::vector<int>& notes)
+    // ===== PUBLIC METHODS FOR THE PROCESSOR =====
+    void setArpNotes(int rhythmIndex, const std::vector<int>& notes);
+
+    // Returns the actual ARP notes (max 7) of the line
+    std::vector<int> getArpNotes(int rhythmIndex) const
     {
-        if (rhythmIndex < 0 || rhythmIndex >= 6)
-            return;
-
-        auto& slots = arpNoteSlots[rhythmIndex];
-
-        for (int i = 0; i < 7; ++i)
-        {
-            if (i < (int)notes.size())
-                slots[i].store(notes[i]);
-            else
-                slots[i].store(-1);
-        }
+        jassert(rhythmIndex >= 0 && rhythmIndex < 6);
+        return arpNotes[rhythmIndex];
     }
 };
-
-
-
-
 
