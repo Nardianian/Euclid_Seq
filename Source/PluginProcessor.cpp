@@ -7,6 +7,10 @@ Euclidean_seqAudioProcessor::Euclidean_seqAudioProcessor()
         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
     parameters(*this, nullptr, "Params", createParameterLayout())
 {
+    // ===== INIT THREAD-SAFE ARP NOTES =====
+    for (int r = 0; r < 6; ++r)
+        arpNoteSelected[r].resize(128, false); // initialize all to false
+
     // ===== ENUMERATE MIDI OUTPUT PORTS =====
     refreshMidiOutputs();
 
@@ -114,9 +118,9 @@ Euclidean_seqAudioProcessor::createParameterLayout()
             "ARP Notes Mask",
             0,
             127,
-            0b0001111)); // default: prime 4 note attive
+            0b0001111)); // default: first 4 active notes
 
-        // ===== MIDI PORT (dynamic, aligned with the ComboBox) =====
+        // ===== MIDI PORT (dinamico, allineato alla ComboBox) =====
         juce::StringArray midiPortNames;
         auto midiDevices = juce::MidiOutput::getAvailableDevices();
 
@@ -126,7 +130,7 @@ Euclidean_seqAudioProcessor::createParameterLayout()
         if (midiPortNames.isEmpty())
             midiPortNames.add("No MIDI Outputs");
 
-        // ===== MIDI OUTPUT PORT (for rhythm) =====
+        // ===== MIDI OUTPUT PORT (per rhythm) =====
         layout.add(std::make_unique<juce::AudioParameterChoice>(
             "rhythm" + juce::String(i) + "_midiPort",
             "MIDI Port",
@@ -264,37 +268,13 @@ bool Euclidean_seqAudioProcessor::isRowActive(int row) const
     if (row < 0 || row >= 6) return false;
     return parameters.getRawParameterValue("rhythm" + juce::String(row) + "_active")->load() > 0.5f;
 }
-
-// Update the ARP input notes for a specific line
-void Euclidean_seqAudioProcessor::updateRowInputNotes(int row)
-{
-    std::lock_guard<std::mutex> lock(arpMutex);
-
-    if (row < 0 || row >= 6) return;
-
-    arpInputNotes[row].clear();
-
-    auto noteValue = parameters.getRawParameterValue("rhythm" + juce::String(row) + "_note")->load();
-
-    // If single note
-    if (noteValue < 1000.0f)
-    {
-        arpInputNotes[row].push_back(static_cast<int>(noteValue));
-    }
-    // TODO: gestire scale e chord qui, trasformando ID in note reali e popolando arpInputNotes[row]
-
-    // Update arpNotes only if ARP is active
-    if (parameters.getRawParameterValue("rhythm" + juce::String(row) + "_arpActive")->load() > 0.5f)
-    {
-        midiGen.setArpNotes(row, arpInputNotes[row]);  // use arpNotes directly
-    }
-}
-
 //==============================================================================
 void Euclidean_seqAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
-    globalSampleCounter = 0;  // global counter reset of sample
+    clock.prepare(sampleRate);
+
+    globalSampleCounter = 0;  // reset global sample counter
     for (int r = 0; r < 6; ++r)
     {
         nextStepSamplePerRhythm[r] = samplesPerStep * r;
@@ -302,8 +282,8 @@ void Euclidean_seqAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
         stepMicrotiming[r].clear();      // microtiming inizializzato vuoto
     }
 
-    midiClockCounter = 0;                // reset external clock counter
-    externalClockRunning = false;        // reset external clock state
+    midiClockCounter = 0;                // reset contatore clock esterno
+    externalClockRunning = false;        // reset stato clock esterno
 }
 
 void Euclidean_seqAudioProcessor::releaseResources()
@@ -314,6 +294,10 @@ void Euclidean_seqAudioProcessor::releaseResources()
 void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     const int numSamples = buffer.getNumSamples();
+
+    clock.processMidi(midiMessages);
+    clock.processBlock(buffer.getNumSamples());
+    const double samplesPerStep = clock.getSamplesPerStep();
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -410,8 +394,6 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             if (auto* chParam = parameters.getRawParameterValue("rhythm" + juce::String(r) + "_midiChannel"))
                 midiChannel = (int)chParam->load() + 1;
 
-            int baseNote = (int)parameters.getRawParameterValue("rhythm" + juce::String(r) + "_note")->load();
-
             // ===== GENERATE NOTES =====
             std::vector<int> generatedNotes;
             switch (noteSources[r].type)
@@ -427,20 +409,8 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 break;
             }
 
-            // ===== UPDATE ARP NOTES (MAX 7,ONLY NOTES AT THE ENTRY) =====
-            if (parameters.getRawParameterValue("rhythm" + juce::String(r) + "_arpActive")->load() > 0.5f)
-            {
-                // Limit to a maximum of 7 notes
-                std::vector<int> arpCandidates = generatedNotes;
-                if (arpCandidates.size() > 7)
-                    arpCandidates.resize(7);
-
-                // Save only the notes received in input, do not make automatic selection
-                midiGen.setArpNotes(r, arpCandidates);
-            }
-
-            if (!generatedNotes.empty())
-                baseNote = generatedNotes[0];
+            // ===== UPDATE ONLY ARP INPUT =====
+            midiGen.setArpInputNotes(r, generatedNotes);
 
             bool euclidHit = midiGen.rhythmPatterns[r].nextStep();
 
@@ -454,28 +424,33 @@ void Euclidean_seqAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
             if (!arpActive)
             {
-                // ARP OFF → all incoming notes pass through unchanged
+                // ARP OFF -> everything goes direct
                 finalNotes = generatedNotes;
             }
             else
             {
-                // ARP ON → one note arpeggiated per step
-                if (arpStepAdvanced)
+                // ARP ON
+                auto arpNotes = midiGen.getArpNotes(r);
+
+                std::vector<int> finalArpNotes;
+                for (int n = 0; n < arpNoteSelected[r].size(); ++n)
+                {
+                    if (arpNoteSelected[r][n])
+                        finalArpNotes.push_back(n);
+                }
+                midiGen.setArpNotes(r, finalArpNotes);
+
+                // 1) Nota arpeggiata (se avanzata)
+                if (arpStepAdvanced && !arpNotes.empty())
                 {
                     int arpIndex = midiGen.rhythmArps[r].getNoteIndex();
-                    auto& arpNotes = midiGen.getArpNotes(r);
-
-                    if (!arpNotes.empty())
-                    {
-                        int idx = arpIndex % arpNotes.size();
-                        finalNotes.push_back(arpNotes[idx]); // arpeggiated note
-                    }
+                    int idx = arpIndex % arpNotes.size();
+                    finalNotes.push_back(arpNotes[idx]);
                 }
 
-                // Pass-through for notes not selected by the ARP (mix with arpeggiated notes)
+                // 2) Pass-through note NON selezionate
                 for (int n : generatedNotes)
                 {
-                    auto& arpNotes = midiGen.getArpNotes(r);
                     if (std::find(arpNotes.begin(), arpNotes.end(), n) == arpNotes.end())
                         finalNotes.push_back(n);
                 }
