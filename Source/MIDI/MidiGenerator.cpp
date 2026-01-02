@@ -22,44 +22,47 @@ std::vector<int> MidiGenerator::getChordNotes(int chordID) const
     default: return { 60 };
     }
 }
-// ===== HELPER: Update ARP notes based on scale or chord =====
-void MidiGenerator::updateArpNotes(int scaleID, int chordID)
+// ===== SET ARP INPUT NOTES (DO NOT TOUCH USER SELECTION) =====
+void MidiGenerator::setArpInputNotes(int rhythmIndex, const std::vector<int>& notes)
 {
-    std::vector<int> scaleNotes = getScaleNotes(scaleID);
+    if (rhythmIndex < 0 || rhythmIndex >= 6)
+        return;
 
-    for (int r = 0; r < 6; ++r)
+    uint64_t lowMask = 0;
+    uint64_t highMask = 0;
+
+    for (int note : notes)
     {
-        arpNotes[r].clear();
+        if (note < 0 || note > 127)
+            continue;
 
-        for (size_t i = 0; i < scaleNotes.size() && i < 7; ++i)
-            arpNotes[r].push_back(scaleNotes[i]);
-
-        // Fill the rest with -1 if you always want to have 7 elements
-        while (arpNotes[r].size() < 7)
-            arpNotes[r].push_back(-1);
-
-        arpEnabled[r].store(true);
+        if (note < 64)
+            lowMask |= (1ULL << note);
+        else
+            highMask |= (1ULL << (note - 64));
     }
-}
 
+    arpInputNotesMaskLow[rhythmIndex].store(lowMask);
+    arpInputNotesMaskHigh[rhythmIndex].store(highMask);
+}
 // ===== SET ARP NOTES (THREAD-SAFE LOGIC) =====
 void MidiGenerator::setArpNotes(int rhythmIndex, const std::vector<int>& notes)
 {
     if (rhythmIndex < 0 || rhythmIndex >= 6)
         return;
 
-    arpNotes[rhythmIndex] = notes;
+    arpNotes[rhythmIndex].clear();
 
-    // ===== RESET THREAD-SAFE MASK FOR NEW NOTES =====
-    arpInputNotesMaskLow[rhythmIndex].store(0);
-    arpInputNotesMaskHigh[rhythmIndex].store(0);
+    for (int n : notes)
+    {
+        if (n >= 0 && n <= 127)
+            arpNotes[rhythmIndex].push_back(n);
 
-    // Always keep 7 items
-    while (arpNotes[rhythmIndex].size() < 7)
-        arpNotes[rhythmIndex].push_back(-1);
+        if ((int)arpNotes[rhythmIndex].size() >= 7)
+            break;
+    }
 }
 
-// ===== ADVANCE ARP FOR ONE LINE (WRAPPER THREAD-SAFE) =====
 bool MidiGenerator::advanceArp(int rhythmIndex,
     double samplesPerStep,
     double samplesPerArpStep)
@@ -67,27 +70,6 @@ bool MidiGenerator::advanceArp(int rhythmIndex,
     if (rhythmIndex < 0 || rhythmIndex >= (int)rhythmArps.size())
         return false;
 
-    if (!arpEnabled[rhythmIndex].load())
-        return false;
-
-    // Advance ARP (true if advanced step)
-    bool stepAdvanced = rhythmArps[rhythmIndex].advance(samplesPerStep, samplesPerArpStep);
-
-    // Read the current step via getNoteIndex()
-    int arpStep = rhythmArps[rhythmIndex].getNoteIndex();
-    std::vector<int>& slots = arpNotes[rhythmIndex];
-
-    for (size_t i = 0; i < slots.size(); ++i)
-    {
-        if (i == arpStep % 7 && slots[i] >= 0)
-        {
-            int note = slots[i];
-            if (note < 64)
-                arpInputNotesMaskLow[rhythmIndex].fetch_or(1ULL << note);
-            else
-                arpInputNotesMaskHigh[rhythmIndex].fetch_or(1ULL << (note - 64));
-        }
-    }
-
-    return stepAdvanced;
+    return rhythmArps[rhythmIndex].advance(samplesPerStep, samplesPerArpStep);
 }
+
