@@ -4,7 +4,7 @@
 #include "MidiGenerator.h"
 #include "Arp.h"
 
-// Popup window for Global Clock settings
+// Settings pop-up window Global Clock
 class ClockSettingsDialog : public juce::Component
 {
 public:
@@ -144,13 +144,15 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
-    void openClockSettingsPopup();  // or move to private
+    void openClockSettingsPopup();  // oppure spostare in private 
     void updateArpGui();
+    // Stato GUI delle note selezionate in ARP Notes per ogni riga
+    std::array<std::vector<juce::ToggleButton*>, 6> arpNoteButtons;
 
 private:
     Euclidean_seqAudioProcessor& audioProcessor;
 
-    juce::TextButton randomizeButton{ "Randomize" };    // or remove the staples with the content
+    juce::TextButton randomizeButton{ "Randomize" };    // oppure eliminare le graffe con il contenuto
     juce::TextButton clockSettingsButton{ "Clock Settings" };
 
     // ===== GLOBAL PLAY =====
@@ -160,8 +162,11 @@ private:
     // ===== Bass (R6) Popup =====
     juce::TextButton bassSettingsButton{ "BASS" };
     std::unique_ptr<juce::CallOutBox> bassPopup;
-
     std::unique_ptr<juce::CallOutBox> clockPopup;
+
+    // ===== ARP Notes Popup =====
+    std::unique_ptr<juce::CallOutBox> arpNotesPopup;
+
     juce::TooltipWindow tooltipWindow;
 
     // Array of controls for each rhythm row
@@ -179,9 +184,9 @@ private:
 
         // ARP Controls
         juce::ToggleButton arpActive;
+        juce::TextButton arpNotesButton;
         juce::ComboBox arpMode;
         juce::ComboBox arpRateBox;
-        juce::TextButton arpNotesButton;
 
         // MIDI output
         juce::Label midiPortLabel;
