@@ -15,9 +15,6 @@ public:
         rhythmPatterns.resize(6);
         rhythmArps.resize(6);
         arpNotes.resize(6);
-
-        for (int r = 0; r < 6; ++r)
-            arpEnabled[r].store(false);
     }
 
     // ===== DATA =====
@@ -25,14 +22,11 @@ public:
     std::vector<Arp> rhythmArps;
     std::vector<std::vector<int>> arpNotes; // note ARP effettive per ogni riga
 
-    // ===== THREAD-SAFE FLAGS =====
-    std::array<std::atomic<bool>, 6> arpEnabled;
-
     // ===== NOTES RECEIVED BY ARP (GUI / HOST) =====
     std::array<std::atomic<uint64_t>, 6> arpInputNotesMaskLow{};   // note 0–63
     std::array<std::atomic<uint64_t>, 6> arpInputNotesMaskHigh{};  // note 64–127
 
-    // ===== FUNCTIONS =====
+    // ===== FUNZIONI =====
     bool triggerStep(int rhythmIndex, int baseNote, int& outMidiNote);
     bool advanceArp(int rhythmIndex, double samplesPerStep, double samplesPerArpStep);
 
@@ -58,7 +52,8 @@ public:
     std::vector<int> getScaleNotes(int scaleID) const;
     std::vector<int> getChordNotes(int chordID) const;
 
-    void updateArpNotes(int scaleID, int chordID);
+    // ===== INPUT NOTES FOR ARP (thread-safe, GUI-visible) =====
+    void setArpInputNotes(int rhythmIndex, const std::vector<int>& notes);
 
     // ===== PUBLIC METHODS FOR THE PROCESSOR =====
     void setArpNotes(int rhythmIndex, const std::vector<int>& notes);
