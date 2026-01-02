@@ -1,8 +1,8 @@
 #pragma once 
 #include <JuceHeader.h>
 #include "MidiGenerator.h"
-
-// For thread safety in ARP
+#include "ClockManager.h"
+// Per thread-safety nell'ARP
 #include <mutex>
 #include <atomic>
 #include <vector>
@@ -48,6 +48,8 @@ public:
     juce::AudioProcessorValueTreeState parameters;
     MidiGenerator midiGen;
 
+    ClockManager clock;
+
     // ================== NOTE SOURCE TYPES ==================
     enum class NoteSourceType
     {
@@ -64,6 +66,9 @@ public:
 
     NoteSource noteSources[6];
 
+    // ===== Thread-safe / GUI state for selected notes in the ARP =====
+    std::array<std::vector<bool>, 6> arpNoteSelected; // ogni riga: 128 elementi
+
     const juce::Array<juce::MidiDeviceInfo>& getAvailableMidiOutputs() const
     {
         return availableMidiOutputs;
@@ -71,7 +76,6 @@ public:
 
     void refreshMidiOutputs();
     void updateMidiOutputForRhythm(int rhythmIndex, int deviceIndex);
-    void updateRowInputNotes(int row);
     bool isRowActive(int row) const;
 
 private:
@@ -128,33 +132,6 @@ private:
     bool isPlaying = false;
     std::atomic<bool> globalPlayState{ false };
 
-    // ================= MEMBRI ARP =================
-    std::mutex arpMutex;
-
-    // Incoming ARP Notes (per line)
-    std::vector<int> arpInputNotes[6];
-
-    // ARP note slot (max 7 notes per line), thread-safe
-    std::vector<int> arpNotes[6];
-
-public:
-    // Setter thread-safe
-    void setArpNotes(int rowIndex, const std::vector<int>& notes)
-    {
-        std::lock_guard<std::mutex> lock(arpMutex);
-        arpNotes[rowIndex].clear();
-        for (int i = 0; i < notes.size() && i < 7; ++i)
-            arpNotes[rowIndex].push_back(notes[i]);
-    }
-
-    // Getter thread-safe
-    std::vector<int> getArpNotes(int rowIndex)
-    {
-        std::lock_guard<std::mutex> lock(arpMutex);
-        return arpNotes[rowIndex];
-    }
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Euclidean_seqAudioProcessor)
 };
-
 
