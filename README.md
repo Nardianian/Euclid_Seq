@@ -59,4 +59,4 @@ At the bottom center there is the global PLAY button.
 thanks to Andreas Sandersen 
 https://sanandreas.no/software
 https://github.com/sandy999999/rhythm-generator
-early code copyright: SanAndreas©2025
+
